@@ -1,0 +1,498 @@
+local CoreGui = game:GetService("CoreGui")
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local TweenService = game:GetService("TweenService")
+
+if CoreGui:FindFirstChild("GoldFishFarmGUI") then
+    CoreGui.GoldFishFarmGUI:Destroy()
+end
+
+-- =============================================================================
+-- 1. COORDINATES & CORE PARAMETERS
+-- =============================================================================
+local posGoodZone   = Vector3.new(1128.735, 22.466, 23.155)
+local posSafeSpace  = Vector3.new(-829.945, 19.769, 46.422)
+local posWalkTarget = Vector3.new(-847.99, 28.15, 55.98)
+
+local isLooping = false
+local FREEZE_THRESHOLD = 2.0 
+
+local config = {
+    CollectionTime = 1.5,
+    AlignTime = 0.3,
+    GlideSpeed = 40
+}
+
+-- =============================================================================
+-- 2. PREMIUM MULTI-TAB GUI DESIGN
+-- =============================================================================
+local GoldFishFarmGUI = Instance.new("ScreenGui")
+GoldFishFarmGUI.Name = "GoldFishFarmGUI"
+GoldFishFarmGUI.Parent = CoreGui
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 380, 0, 240)
+MainFrame.Position = UDim2.new(0.05, 0, 0.3, 0)
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 14, 22)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = GoldFishFarmGUI
+
+local MainUICorner = Instance.new("UICorner")
+MainUICorner.CornerRadius = UDim.new(0, 10)
+MainUICorner.Parent = MainFrame
+
+local MainUIStroke = Instance.new("UIStroke")
+MainUIStroke.Color = Color3.fromRGB(255, 215, 0)
+MainUIStroke.Thickness = 1.2
+MainUIStroke.Parent = MainFrame
+
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 35)
+TitleBar.BackgroundTransparency = 1
+TitleBar.Parent = MainFrame
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Size = UDim2.new(0, 250, 1, 0)
+TitleLabel.Position = UDim2.new(0, 15, 0, 0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text = "AUTO FISH GOLD GOLD GOLD"
+TitleLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
+TitleLabel.TextSize = 13
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+TitleLabel.Parent = TitleBar
+
+local MinimizeButton = Instance.new("TextButton")
+MinimizeButton.Size = UDim2.new(0, 25, 0, 25)
+MinimizeButton.Position = UDim2.new(1, -35, 0, 5)
+MinimizeButton.BackgroundColor3 = Color3.fromRGB(25, 24, 35)
+MinimizeButton.Text = "—"
+MinimizeButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+MinimizeButton.TextSize = 12
+MinimizeButton.Font = Enum.Font.GothamBold
+MinimizeButton.Parent = TitleBar
+
+local MinCorner = Instance.new("UICorner")
+MinCorner.CornerRadius = UDim.new(0, 6)
+MinCorner.Parent = MinimizeButton
+
+local FloatingEmoji = Instance.new("TextButton")
+FloatingEmoji.Size = UDim2.new(0, 50, 0, 50)
+FloatingEmoji.Position = UDim2.new(0.05, 0, 0.3, 0)
+FloatingEmoji.BackgroundColor3 = Color3.fromRGB(20, 18, 30)
+FloatingEmoji.Text = "🤑"
+FloatingEmoji.TextSize = 28
+FloatingEmoji.Visible = false
+FloatingEmoji.Active = true
+FloatingEmoji.Draggable = true
+FloatingEmoji.Parent = GoldFishFarmGUI
+
+local EmojiCorner = Instance.new("UICorner")
+EmojiCorner.CornerRadius = UDim.new(1, 0)
+EmojiCorner.Parent = FloatingEmoji
+
+local EmojiStroke = Instance.new("UIStroke")
+EmojiStroke.Color = Color3.fromRGB(255, 215, 0)
+EmojiStroke.Thickness = 1.5
+EmojiStroke.Parent = FloatingEmoji
+
+local Line = Instance.new("Frame")
+Line.Size = UDim2.new(1, 0, 0, 1)
+Line.Position = UDim2.new(0, 0, 0, 35)
+Line.BackgroundColor3 = Color3.fromRGB(35, 33, 48)
+Line.BorderSizePixel = 0
+Line.Parent = MainFrame
+
+local Sidebar = Instance.new("Frame")
+Sidebar.Size = UDim2.new(0, 90, 1, -36)
+Sidebar.Position = UDim2.new(0, 0, 0, 36)
+Sidebar.BackgroundColor3 = Color3.fromRGB(11, 10, 16)
+Sidebar.BorderSizePixel = 0
+Sidebar.Parent = MainFrame
+
+local SideDivider = Instance.new("Frame")
+SideDivider.Size = UDim2.new(0, 1, 1, 0)
+SideDivider.Position = UDim2.new(1, -1, 0, 0)
+SideDivider.BackgroundColor3 = Color3.fromRGB(35, 33, 48)
+SideDivider.BorderSizePixel = 0
+SideDivider.Parent = Sidebar
+
+local Container = Instance.new("Frame")
+Container.Size = UDim2.new(1, -100, 1, -41)
+Container.Position = UDim2.new(0, 95, 0, 41)
+Container.BackgroundTransparency = 1
+Container.Parent = MainFrame
+
+local tabButtons = {}
+local tabPages = {}
+
+local function createTab(name, index)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -10, 0, 30)
+    btn.Position = UDim2.new(0, 5, 0, 5 + ((index - 1) * 35))
+    btn.BackgroundColor3 = index == 1 and Color3.fromRGB(25, 22, 40) or Color3.fromRGB(0, 0, 0)
+    btn.BackgroundTransparency = index == 1 and 0 or 1
+    btn.Text = name
+    btn.TextColor3 = index == 1 and Color3.fromRGB(255, 215, 0) or Color3.fromRGB(150, 150, 160)
+    btn.TextSize = 11
+    btn.Font = Enum.Font.GothamBold
+    btn.Parent = Sidebar
+    
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(0, 6)
+    btnCorner.Parent = btn
+    
+    local page = Instance.new("Frame")
+    page.Size = UDim2.new(1, 0, 1, 0)
+    page.BackgroundTransparency = 1
+    page.Visible = (index == 1)
+    page.Parent = Container
+    
+    tabButtons[name] = btn
+    tabPages[name] = page
+    
+    btn.MouseButton1Click:Connect(function()
+        for tName, tBtn in pairs(tabButtons) do
+            tBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+            tBtn.BackgroundTransparency = 1
+            tBtn.TextColor3 = Color3.fromRGB(150, 150, 160)
+        end
+        for tName, tPage in pairs(tabPages) do
+            tPage.Visible = false
+        end
+        btn.BackgroundColor3 = Color3.fromRGB(25, 22, 40)
+        btn.BackgroundTransparency = 0
+        btn.TextColor3 = Color3.fromRGB(255, 215, 0)
+        page.Visible = true
+    end)
+    return page
+end
+
+local pageFarm = createTab("Farm", 1)
+local pageSettings = createTab("Settings", 2)
+local pageCredits = createTab("Credits", 3)
+
+-- =============================================================================
+-- TAB Content: FARM PAGE POPULATION (WITH COMPONENT TOGGLE SLIDER)
+-- =============================================================================
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Size = UDim2.new(1, 0, 0, 30)
+StatusLabel.Position = UDim2.new(0, 0, 0, 5)
+StatusLabel.BackgroundColor3 = Color3.fromRGB(22, 20, 32)
+StatusLabel.Text = "STATUS: IDLE"
+StatusLabel.TextColor3 = Color3.fromRGB(150, 155, 180)
+StatusLabel.TextSize = 11
+StatusLabel.Font = Enum.Font.Code
+StatusLabel.Parent = pageFarm
+
+local StatusUICorner = Instance.new("UICorner")
+StatusUICorner.CornerRadius = UDim.new(0, 6)
+StatusUICorner.Parent = StatusLabel
+
+-- Toggle Frame Component Row
+local ToggleRow = Instance.new("Frame")
+ToggleRow.Size = UDim2.new(1, 0, 0, 45)
+ToggleRow.Position = UDim2.new(0, 0, 0, 45)
+ToggleRow.BackgroundTransparency = 1
+ToggleRow.Parent = pageFarm
+
+local ToggleText = Instance.new("TextLabel")
+ToggleText.Size = UDim2.new(0, 150, 1, 0)
+ToggleText.Position = UDim2.new(0, 5, 0, 0)
+ToggleText.BackgroundTransparency = 1
+ToggleText.Text = "START AUTO FISH"
+ToggleText.TextColor3 = Color3.fromRGB(230, 230, 240)
+ToggleText.TextSize = 12
+ToggleText.Font = Enum.Font.GothamBold
+ToggleText.TextXAlignment = Enum.TextXAlignment.Left
+ToggleText.Parent = ToggleRow
+
+-- Outer Track Pill Box Shape
+local ToggleTrack = Instance.new("TextButton")
+ToggleTrack.Size = UDim2.new(0, 55, 0, 28)
+ToggleTrack.Position = UDim2.new(1, -60, 0, 8)
+ToggleTrack.BackgroundColor3 = Color3.fromRGB(40, 35, 55) -- Muted off-state pill track background
+ToggleTrack.Text = ""
+ToggleTrack.AutoButtonColor = false
+ToggleTrack.Parent = ToggleRow
+
+local TrackCorner = Instance.new("UICorner")
+TrackCorner.CornerRadius = UDim.new(1, 0)
+TrackCorner.Parent = ToggleTrack
+
+-- Inner Sliding Circle
+local ToggleBall = Instance.new("Frame")
+ToggleBall.Size = UDim2.new(0, 22, 0, 22)
+ToggleBall.Position = UDim2.new(0, 3, 0, 3)
+ToggleBall.BackgroundColor3 = Color3.fromRGB(15, 12, 22) -- Dark inner slider circle
+ToggleBall.BorderSizePixel = 0
+ToggleBall.Parent = ToggleTrack
+
+local BallCorner = Instance.new("UICorner")
+BallCorner.CornerRadius = UDim.new(1, 0)
+BallCorner.Parent = ToggleBall
+
+local UnloadButton = Instance.new("TextButton")
+UnloadButton.Size = UDim2.new(1, 0, 0, 35)
+UnloadButton.Position = UDim2.new(0, 0, 0, 105)
+UnloadButton.BackgroundColor3 = Color3.fromRGB(35, 20, 25)
+UnloadButton.Text = "UNLOAD INTERFACE"
+UnloadButton.TextColor3 = Color3.fromRGB(255, 120, 120)
+UnloadButton.TextSize = 10
+UnloadButton.Font = Enum.Font.GothamBold
+UnloadButton.Parent = pageFarm
+
+local UnloadUICorner = Instance.new("UICorner")
+UnloadUICorner.CornerRadius = UDim.new(0, 8)
+UnloadUICorner.Parent = UnloadButton
+
+-- =============================================================================
+-- TAB Content: CONFIGURABLE SETTINGS ENGINE (FIXED CRASH STACK)
+-- =============================================================================
+local function createNumericSetting(labelName, configKey, yOffset, defaultValue, increment)
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 20)
+    title.Position = UDim2.new(0, 0, 0, yOffset)
+    title.BackgroundTransparency = 1
+    title.Text = string.format("%s: %s", labelName, tostring(config[configKey]))
+    title.TextColor3 = Color3.fromRGB(200, 200, 220)
+    title.TextSize = 11
+    title.Font = Enum.Font.Gotham
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = pageSettings
+
+    local minusBtn = Instance.new("TextButton")
+    minusBtn.Size = UDim2.new(0, 30, 0, 20)
+    minusBtn.Position = UDim2.new(1, -70, 0, yOffset)
+    minusBtn.BackgroundColor3 = Color3.fromRGB(35, 33, 50)
+    minusBtn.Text = "-"
+    minusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    minusBtn.Font = Enum.Font.GothamBold
+    minusBtn.Parent = pageSettings
+    
+    local mCc = Instance.new("UICorner")
+    mCc.CornerRadius = UDim.new(0, 4)
+    mCc.Parent = minusBtn
+
+    local plusBtn = Instance.new("TextButton")
+    plusBtn.Size = UDim2.new(0, 30, 0, 20)
+    plusBtn.Position = UDim2.new(1, -35, 0, yOffset)
+    plusBtn.BackgroundColor3 = Color3.fromRGB(35, 33, 50)
+    plusBtn.Text = "+"
+    plusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    plusBtn.Font = Enum.Font.GothamBold
+    plusBtn.Parent = pageSettings
+    
+    local pCc = Instance.new("UICorner")
+    pCc.CornerRadius = UDim.new(0, 4)
+    pCc.Parent = plusBtn
+
+    minusBtn.MouseButton1Click:Connect(function()
+        config[configKey] = math.max(0, config[configKey] - increment)
+        title.Text = string.format("%s: %s", labelName, tostring(config[configKey]))
+    end)
+
+    plusBtn.MouseButton1Click:Connect(function()
+        config[configKey] = config[configKey] + increment
+        title.Text = string.format("%s: %s", labelName, tostring(config[configKey]))
+    end)
+end
+
+createNumericSetting("Collect Delay (s)", "CollectionTime", 10, 1.5, 0.1)
+createNumericSetting("Align Delay (s)", "AlignTime", 45, 0.3, 0.05)
+createNumericSetting("Walk Speed", "GlideSpeed", 80, 40, 5)
+
+-- =============================================================================
+-- TAB Content: CREDITS PAGE
+-- =============================================================================
+local CreditsNotice = Instance.new("TextLabel")
+CreditsNotice.Size = UDim2.new(1, 0, 1, 0)
+CreditsNotice.BackgroundTransparency = 1
+CreditsNotice.Text = "Script made by Leon Ulfsbo and Gemeni."
+CreditsNotice.TextColor3 = Color3.fromRGB(255, 255, 255)
+CreditsNotice.TextSize = 20
+CreditsNotice.Font = Enum.Font.Gotham
+CreditsNotice.TextWrapped = true
+CreditsNotice.Parent = pageCredits
+
+-- =============================================================================
+-- MINIMIZE ACTION HOOKS
+-- =============================================================================
+MinimizeButton.MouseButton1Click:Connect(function()
+    MainFrame.Visible = false
+    FloatingEmoji.Position = UDim2.new(0, MainFrame.AbsolutePosition.X, 0, MainFrame.AbsolutePosition.Y)
+    FloatingEmoji.Visible = true
+end)
+
+FloatingEmoji.MouseButton1Click:Connect(function()
+    FloatingEmoji.Visible = false
+    MainFrame.Position = UDim2.new(0, FloatingEmoji.AbsolutePosition.X, 0, FloatingEmoji.AbsolutePosition.Y)
+    MainFrame.Visible = true
+end)
+
+-- =============================================================================
+-- 3. SPEED-OPTIMIZED PATHING LOGIC
+-- =============================================================================
+local function updateStatus(text, isWarning)
+    if not GoldFishFarmGUI or not StatusLabel.Parent then return end
+    StatusLabel.Text = "STATUS: " .. string.upper(text)
+    StatusLabel.TextColor3 = isWarning and Color3.fromRGB(255, 90, 90) or Color3.fromRGB(200, 205, 225)
+end
+
+local function tp(targetPosition)
+    local character = player.Character or player.CharacterAdded:Wait()
+    local rootPart = character:WaitForChild("HumanoidRootPart", 5)
+    if rootPart then
+        rootPart.CFrame = CFrame.new(targetPosition)
+        return true
+    end
+    return false
+end
+
+local function flyWalkTo(targetPosition)
+    local character = player.Character
+    local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return false end
+    
+    local startPos = rootPart.Position
+    local distance = (targetPosition - startPos).Magnitude
+    local startTime = tick()
+    
+    while isLooping do
+        local travelTime = distance / config.GlideSpeed
+        local elapsed = tick() - startTime
+        local progress = math.min(elapsed / travelTime, 1)
+        rootPart.CFrame = CFrame.new(startPos:Lerp(targetPosition, progress))
+        if progress >= 1 then break end
+        task.wait()
+    end
+    
+    if isLooping then
+        rootPart.CFrame = CFrame.new(targetPosition)
+        return true
+    end
+    return false
+end
+
+local function checkInstantStill()
+    local character = player.Character
+    local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return false end
+    
+    local p1 = rootPart.Position
+    task.wait(0.05)
+    
+    character = player.Character
+    rootPart = character and character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return false end
+    
+    local p2 = rootPart.Position
+    return (p1 - p2).Magnitude < 0.05
+end
+
+local function runVelocityLoop()
+    while isLooping do
+        updateStatus("Collecting loot...")
+        local reachedSafe = tp(posSafeSpace)
+        if not reachedSafe then
+            task.wait(0.5)
+            continue
+        end
+        task.wait(config.CollectionTime)
+        
+        if not isLooping then break end
+
+        updateStatus("Stabilizing physics...")
+        tp(posSafeSpace)
+        task.wait(config.AlignTime)
+        
+        if not isLooping then break end
+
+        updateStatus("Walking to path cords...")
+        local reachedTargetPath = flyWalkTo(posWalkTarget)
+        if not reachedTargetPath then continue end
+        
+        if not isLooping then break end
+
+        updateStatus("Walking back to base...")
+        local returnedToSafe = flyWalkTo(posSafeSpace)
+        if not returnedToSafe then continue end
+        
+        if not isLooping then break end
+
+        updateStatus("Firing fishing trigger...")
+        local movedToGrounds = tp(posGoodZone)
+        if not movedToGrounds then continue end
+        
+        updateStatus("Awaiting freeze...")
+        local freezeTimer = 0
+        local safetyTimeout = 0
+        
+        while isLooping and safetyTimeout < 15 do
+            if checkInstantStill() then
+                freezeTimer = freezeTimer + 0.05
+                updateStatus(string.format("Freezing... (%.1fs)", freezeTimer))
+                if freezeTimer >= FREEZE_THRESHOLD then
+                    break
+                end
+            else
+                freezeTimer = 0 
+            end
+            task.wait(0.05)
+            safetyTimeout = safetyTimeout + 0.05
+        end
+        
+        if not isLooping then break end
+        
+        updateStatus("Processing payload...")
+        while isLooping do
+            if not checkInstantStill() then
+                break 
+            end
+            task.wait(0.05)
+        end
+        
+        if not isLooping then break end
+    end
+    
+    if GoldFishFarmGUI.Parent then
+        updateStatus("IDLE")
+    end
+end
+
+-- =============================================================================
+-- 4. TOGGLE COMPONENT SLIDING INTERACTION SYSTEM
+-- =============================================================================
+ToggleTrack.MouseButton1Click:Connect(function()
+    isLooping = not isLooping
+    
+    local ballTargetPosition
+    local trackTargetColor
+    
+    if isLooping then
+        ToggleText.Text = "STOP AUTO FISH"
+        ballTargetPosition = UDim2.new(0, 30, 0, 3) -- Slide right side
+        trackTargetColor = Color3.fromRGB(186, 114, 255) -- Matching the lavender purple light state from your reference image cfe742.png
+        
+        task.spawn(runVelocityLoop)
+    else
+        ToggleText.Text = "START AUTO FISH"
+        ballTargetPosition = UDim2.new(0, 3, 0, 3) -- Slide back left
+        trackTargetColor = Color3.fromRGB(40, 35, 55) -- Return to default track off color
+        
+        updateStatus("Stopping...")
+    end
+    
+    -- Animate the sliding ball and track color transitions smoothly
+    TweenService:Create(ToggleBall, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = ballTargetPosition}):Play()
+    TweenService:Create(ToggleTrack, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = trackTargetColor}):Play()
+end)
+
+UnloadButton.MouseButton1Click:Connect(function()
+    isLooping = false
+    updateStatus("Unloading...")
+    task.wait(0.1)
+    GoldFishFarmGUI:Destroy()
+end)
