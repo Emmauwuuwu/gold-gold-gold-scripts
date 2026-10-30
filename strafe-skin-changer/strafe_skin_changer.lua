@@ -40,12 +40,14 @@ local function g(fn, ...)
 	return table.unpack(res, 1, res.n)
 end
 
-local SM, SC, CC
+local SM, SC, CC, WC
 g(function()
 	SM = require(RS.Classes.Combat.SkinManager)
 	SC = require(RS.Classes.Combat.SkinsConfig)
 	local okC, c = pcall(require, RS.Classes.Combat.CasesConfig)
 	if okC then CC = c end
+	local okW, w = pcall(require, RS.Classes.Combat.WeaponsConfig)
+	if okW then WC = w end
 end)
 if not (SM and SC) then
 	warn("[SkinChanger] This doesn't look like STRAFE FPS (its skin scripts were not found), so nothing was changed.")
@@ -70,7 +72,7 @@ end
 
 -- ===================== skin lists =====================
 -- weapons come from the game's model folder; only weapons that have texture skins are listed
-local weapons, skinsOf = {}, {}
+local weapons, skinsOf, displayOf = {}, {}, {}
 local function computeSkins(w)   -- needs identity 2: call through g()
 	local list = {}
 	local ok, all = pcall(SC.getSkinsForWeapon, w)
@@ -106,9 +108,14 @@ g(function()
 	for _, m in ipairs(models:GetChildren()) do
 		local list = computeSkins(m.Name)
 		skinsOf[m.Name] = list
-		if #list > 0 then weapons[#weapons + 1] = m.Name end
+		if #list > 0 then
+			weapons[#weapons + 1] = m.Name
+			local dn
+			if WC then pcall(function() dn = WC.getDisplayName(m.Name) end) end
+			displayOf[m.Name] = (type(dn) == "string" and dn ~= "") and dn or m.Name
+		end
 	end
-	table.sort(weapons)
+	table.sort(weapons, function(a, b) return string.lower(displayOf[a]) < string.lower(displayOf[b]) end)
 end)
 
 -- ===================== knife look =====================
@@ -214,6 +221,7 @@ local function applyNow(weapon)
 	return (g(SM.removeSkin, gun))
 end
 
+
 -- ===================== window =====================
 local C = {
 	bg = Color3.fromRGB(20, 21, 27), panel = Color3.fromRGB(30, 31, 40), item = Color3.fromRGB(42, 44, 56),
@@ -261,8 +269,9 @@ local function button(parent, str, pos, sz, bg)
 	return b
 end
 
+local W, H = 660, 470
 local win = make("Frame", {
-	Size = UDim2.fromOffset(640, 440), Position = UDim2.new(0.5, -320, 0.5, -220), BackgroundColor3 = C.bg, BorderSizePixel = 0,
+	Size = UDim2.fromOffset(W, H), Position = UDim2.new(0.5, -W / 2, 0.5, -H / 2), BackgroundColor3 = C.bg, BorderSizePixel = 0,
 }, gui)
 corner(win, 10)
 
@@ -272,13 +281,17 @@ pill.Visible = false
 local function setOpen(open) win.Visible = open; pill.Visible = not open end
 pill.MouseButton1Click:Connect(function() setOpen(true) end)
 
-local top = make("Frame", { Size = UDim2.new(1, 0, 0, 42), BackgroundColor3 = C.panel, BorderSizePixel = 0 }, win)
+-- title bar: name, the two tabs, small note, help / hide / close
+local top = make("Frame", { Size = UDim2.new(1, 0, 0, 44), BackgroundColor3 = C.panel, BorderSizePixel = 0 }, win)
 corner(top, 10)
-text(top, "Skin Changer", 17, C.text, UDim2.fromOffset(14, 0), UDim2.fromOffset(150, 42), nil, Enum.Font.GothamBold)
-text(top, "only you can see these changes", 12, C.dim, UDim2.fromOffset(150, 0), UDim2.new(1, -330, 1, 0))
-local closeBtn = button(top, "X", UDim2.new(1, -36, 0, 8), UDim2.fromOffset(28, 26))
-local hideBtn = button(top, "–", UDim2.new(1, -70, 0, 8), UDim2.fromOffset(28, 26))
-local helpBtn = button(top, "?", UDim2.new(1, -104, 0, 8), UDim2.fromOffset(28, 26))
+text(top, "Skin Changer", 17, C.text, UDim2.fromOffset(14, 0), UDim2.fromOffset(130, 44), nil, Enum.Font.GothamBold)
+local tabSkins = button(top, "Skins", UDim2.fromOffset(150, 9), UDim2.fromOffset(80, 26), C.sel)
+local tabKnife = button(top, "Knife look", UDim2.fromOffset(236, 9), UDim2.fromOffset(110, 26), C.item)
+tabKnife.Visible = #styles > 0
+text(top, "local only: others don't see it", 11, C.dim, UDim2.new(1, -330, 0, 0), UDim2.fromOffset(200, 44), Enum.TextXAlignment.Right)
+local closeBtn = button(top, "X", UDim2.new(1, -38, 0, 9), UDim2.fromOffset(28, 26))
+local hideBtn = button(top, "–", UDim2.new(1, -72, 0, 9), UDim2.fromOffset(28, 26))
+local helpBtn = button(top, "?", UDim2.new(1, -106, 0, 9), UDim2.fromOffset(28, 26))
 
 -- dragging by the title bar
 do
@@ -296,7 +309,7 @@ do
 end
 
 -- bottom bar: status line and reset buttons
-local bar = make("Frame", { Position = UDim2.new(0, 10, 1, -52), Size = UDim2.new(1, -20, 0, 44), BackgroundColor3 = C.panel, BorderSizePixel = 0 }, win)
+local bar = make("Frame", { Position = UDim2.new(0, 10, 1, -54), Size = UDim2.new(1, -20, 0, 44), BackgroundColor3 = C.panel, BorderSizePixel = 0 }, win)
 corner(bar, 8)
 local status = text(bar, "", 12, C.dim, UDim2.fromOffset(12, 0), UDim2.new(1, -250, 1, 0))
 local resetOne = button(bar, "Reset this one", UDim2.new(1, -236, 0, 8), UDim2.fromOffset(110, 28))
@@ -306,38 +319,49 @@ local function setStatus(t, kind)
 	status.TextColor3 = (kind == "good" and C.good) or (kind == "warn" and C.warn) or C.dim
 end
 
-local function column(x, w, title, withSearch)
-	local f = make("Frame", { Position = UDim2.fromOffset(x, 50), Size = UDim2.new(0, w, 1, -110), BackgroundColor3 = C.panel, BorderSizePixel = 0 }, win)
+-- a panel with a small title, an optional search box, and a scrolling list
+local function column(title, hint)
+	local f = make("Frame", { BackgroundColor3 = C.panel, BorderSizePixel = 0 }, win)
 	corner(f, 8)
-	text(f, title, 12, C.dim, UDim2.fromOffset(12, 6), UDim2.new(1, -24, 0, 16), nil, Enum.Font.GothamMedium)
-	local search
-	local listTop = 28
-	if withSearch then
-		search = make("TextBox", {
-			Position = UDim2.fromOffset(8, 26), Size = UDim2.new(1, -16, 0, 26), BackgroundColor3 = C.item, TextColor3 = C.text,
-			PlaceholderText = "Search skins...", PlaceholderColor3 = C.dim, Text = "", Font = Enum.Font.Gotham, TextSize = 13,
-			ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left,
-		}, f)
-		corner(search, 6)
-		make("UIPadding", { PaddingLeft = UDim.new(0, 8) }, search)
-		listTop = 58
-	end
+	local t = text(f, title, 12, C.dim, UDim2.fromOffset(12, 6), UDim2.new(1, -24, 0, 16), nil, Enum.Font.GothamMedium)
+	local search = make("TextBox", {
+		Position = UDim2.fromOffset(8, 26), Size = UDim2.new(1, -16, 0, 26), BackgroundColor3 = C.item, TextColor3 = C.text,
+		PlaceholderText = hint, PlaceholderColor3 = C.dim, Text = "", Font = Enum.Font.Gotham, TextSize = 13,
+		ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left,
+	}, f)
+	corner(search, 6)
+	make("UIPadding", { PaddingLeft = UDim.new(0, 8) }, search)
 	local s = make("ScrollingFrame", {
-		Position = UDim2.fromOffset(6, listTop), Size = UDim2.new(1, -12, 1, -(listTop + 6)), BackgroundTransparency = 1, BorderSizePixel = 0,
+		Position = UDim2.fromOffset(6, 58), Size = UDim2.new(1, -12, 1, -64), BackgroundTransparency = 1, BorderSizePixel = 0,
 		ScrollBarThickness = 4, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
 	}, f)
 	make("UIListLayout", { Padding = UDim.new(0, 4) }, s)
-	return s, search
+	return { frame = f, title = t, search = search, scroll = s }
 end
-local wCol = column(10, 190, "WEAPON")
-local sCol, searchBox = column(208, 422, "SKIN", true)
+local left = column("WEAPONS", "Search weapons...")
+local right = column("SKINS", "Search skins...")
 
-local current      -- selected weapon (or the knife-look entry)
-local weaponBtns, skinBtns = {}, {}
-local refreshSkins
-local STYLE_ENTRY = "Knife look"
+local tab = "skins"
+local function layout()
+	if tab == "skins" then
+		left.frame.Visible = true
+		left.frame.Position = UDim2.fromOffset(10, 52); left.frame.Size = UDim2.new(0, 214, 1, -114)
+		right.frame.Position = UDim2.fromOffset(232, 52); right.frame.Size = UDim2.new(1, -242, 1, -114)
+		right.search.Visible = true
+		right.scroll.Position = UDim2.fromOffset(6, 58); right.scroll.Size = UDim2.new(1, -12, 1, -64)
+	else
+		left.frame.Visible = false
+		right.frame.Position = UDim2.fromOffset(10, 52); right.frame.Size = UDim2.new(1, -20, 1, -114)
+		right.search.Visible = false
+		right.scroll.Position = UDim2.fromOffset(6, 28); right.scroll.Size = UDim2.new(1, -12, 1, -34)
+	end
+end
 
--- a list row: left stripe (rarity colour), name, small tag on the right, blue when in use
+local current      -- selected weapon (skins tab)
+local weaponRows, skinRows = {}, {}
+local refreshWeapons, refreshSkins
+
+-- a list row: optional left stripe (rarity colour), name, small tag on the right, blue when in use
 local function row(parent, name, tag, active, stripe)
 	local b = make("TextButton", {
 		Size = UDim2.new(1, -4, 0, 30), BackgroundColor3 = active and C.sel or C.item, Text = "", AutoButtonColor = false,
@@ -347,29 +371,63 @@ local function row(parent, name, tag, active, stripe)
 		local st = make("Frame", { Size = UDim2.new(0, 4, 1, -10), Position = UDim2.fromOffset(5, 5), BackgroundColor3 = stripe, BorderSizePixel = 0 }, b)
 		corner(st, 2)
 	end
-	text(b, name, 13, C.text, UDim2.fromOffset(stripe and 16 or 12, 0), UDim2.new(1, -110, 1, 0))
+	local label = text(b, name, 13, C.text, UDim2.fromOffset(stripe and 16 or 12, 0), UDim2.new(1, -(stripe and 16 or 12) - 84, 1, 0))
+	label.TextTruncate = Enum.TextTruncate.AtEnd
 	if tag and tag ~= "" then
-		text(b, tag, 11, active and C.text or C.dim, UDim2.new(1, -102, 0, 0), UDim2.fromOffset(94, 30), Enum.TextXAlignment.Right)
+		text(b, tag, 11, active and C.text or C.dim, UDim2.new(1, -86, 0, 0), UDim2.fromOffset(78, 30), Enum.TextXAlignment.Right)
 	end
 	b.MouseEnter:Connect(function() if not active then b.BackgroundColor3 = C.itemHover end end)
 	b.MouseLeave:Connect(function() if not active then b.BackgroundColor3 = C.item end end)
 	return b
 end
+local function header(parent, str)
+	local l = text(parent, str, 11, C.dim, UDim2.new(), UDim2.new(1, -4, 0, 20), nil, Enum.Font.GothamMedium)
+	make("UIPadding", { PaddingLeft = UDim.new(0, 4), PaddingTop = UDim.new(0, 4) }, l)
+	return l
+end
+local function note(parent, str, store)
+	local l = text(parent, str, 12, C.dim, UDim2.new(), UDim2.new(1, -8, 0, 0))
+	l.AutomaticSize = Enum.AutomaticSize.Y
+	store[#store + 1] = l
+	return l
+end
 
-local entries = {}
-if #styles > 0 then entries[1] = STYLE_ENTRY end
-for _, w in ipairs(weapons) do entries[#entries + 1] = w end
-
-local function refreshWeapons()
-	for _, b in pairs(weaponBtns) do b:Destroy() end
-	weaponBtns = {}
-	for _, w in ipairs(entries) do
-		local tag
-		if w == STYLE_ENTRY then tag = knifeStyle or "" else tag = sel[w] and "custom" or "" end
-		local b = row(wCol, w, tag, w == current)
-		weaponBtns[w] = b
-		b.MouseButton1Click:Connect(function() current = w; searchBox.Text = ""; refreshWeapons(); refreshSkins() end)
+-- guns and melee weapons are listed in their own groups
+local melee = { Knife = true }
+for _, n in ipairs(styles) do melee[n] = true end
+local function groups(q)
+	local guns, mel = {}, {}
+	for _, w in ipairs(weapons) do
+		local d = displayOf[w] or w
+		if q == "" or string.find(string.lower(d), q, 1, true) or string.find(string.lower(w), q, 1, true) then
+			if melee[w] then mel[#mel + 1] = w else guns[#guns + 1] = w end
+		end
 	end
+	return guns, mel
+end
+
+function refreshWeapons()
+	for _, b in pairs(weaponRows) do b:Destroy() end
+	weaponRows = {}
+	local guns, mel = groups(string.lower(left.search.Text or ""))
+	local function add(list, title)
+		if #list == 0 then return end
+		weaponRows[#weaponRows + 1] = header(left.scroll, title .. "  (" .. #list .. ")")
+		for _, w in ipairs(list) do
+			local b = row(left.scroll, displayOf[w] or w, sel[w] and "custom" or "", w == current)
+			weaponRows[#weaponRows + 1] = b
+			b.MouseButton1Click:Connect(function() current = w; right.search.Text = ""; refreshWeapons(); refreshSkins() end)
+		end
+	end
+	add(guns, "GUNS")
+	add(mel, "MELEE")
+	if #guns + #mel == 0 then note(left.scroll, "No weapons match \"" .. (left.search.Text or "") .. "\".", weaponRows) end
+end
+
+local function updateTabs()
+	tabSkins.BackgroundColor3 = tab == "skins" and C.sel or C.item
+	tabKnife.BackgroundColor3 = tab == "knife" and C.sel or C.item
+	tabKnife.Text = knifeStyle and "Knife look  •" or "Knife look"
 end
 
 local function chooseStyle(name)
@@ -377,94 +435,103 @@ local function chooseStyle(name)
 	if ok and res then
 		sel.__style = name   -- nil clears it
 		save()
-		setStatus(name and (name .. " look is on. Switch to another weapon and back to your knife to see it.") or "Back to the normal Knife. Switch weapons and back to see it.", "good")
+		setStatus(name and ((displayOf[name] or name) .. " look is on. Switch to another weapon and back to your knife to see it.") or "Back to the normal Knife. Switch weapons and back to see it.", "good")
 	else
 		setStatus("Couldn't change the knife look, so nothing was changed.", "warn")
 	end
-	refreshWeapons(); refreshSkins()
-end
-
-local function note(str)
-	local l = text(sCol, str, 12, C.dim, UDim2.new(), UDim2.new(1, -8, 0, 0), nil, Enum.Font.Gotham)
-	l.AutomaticSize = Enum.AutomaticSize.Y
-	skinBtns[#skinBtns + 1] = l
+	updateTabs(); refreshSkins()
 end
 
 function refreshSkins()
-	for _, b in pairs(skinBtns) do b:Destroy() end
-	skinBtns = {}
-	if not current then return end
-	if current == STYLE_ENTRY then
-		searchBox.Visible = false
-		note("Choose which weapon your Knife looks and swings like. Damage and range stay the Knife's own, and other players still see a normal Knife.")
-		local d0 = row(sCol, "Normal Knife", "default", knifeStyle == nil)
-		skinBtns[#skinBtns + 1] = d0
+	for _, b in pairs(skinRows) do b:Destroy() end
+	skinRows = {}
+	if tab == "knife" then
+		right.title.Text = "KNIFE LOOK"
+		note(right.scroll, "Choose which weapon your Knife looks and swings like. Damage and range stay the Knife's own, and other players still see a normal Knife.", skinRows)
+		local d0 = row(right.scroll, "Normal Knife", knifeStyle == nil and "in use" or "", knifeStyle == nil)
+		skinRows[#skinRows + 1] = d0
 		d0.MouseButton1Click:Connect(function() chooseStyle(nil) end)
 		for _, name in ipairs(styles) do
-			local b = row(sCol, name, knifeStyle == name and "in use" or "", knifeStyle == name)
-			skinBtns[#skinBtns + 1] = b
+			local on = knifeStyle == name
+			local b = row(right.scroll, displayOf[name] or name, on and "in use" or "", on)
+			skinRows[#skinRows + 1] = b
 			b.MouseButton1Click:Connect(function() chooseStyle(name) end)
 		end
 		return
 	end
-	searchBox.Visible = true
-	local q = string.lower(searchBox.Text or "")
-	local d = row(sCol, "My own skin (default)", sel[current] == nil and "in use" or "", sel[current] == nil)
-	skinBtns[#skinBtns + 1] = d
+	if not current then
+		right.title.Text = "SKINS"
+		note(right.scroll, "Pick a weapon on the left.", skinRows)
+		return
+	end
+	local q = string.lower(right.search.Text or "")
+	local list = skinsFor(current)
+	local d = row(right.scroll, "My own skin (default)", sel[current] == nil and "in use" or "", sel[current] == nil)
+	skinRows[#skinRows + 1] = d
 	d.MouseButton1Click:Connect(function()
 		sel[current] = nil; save(); refreshWeapons(); refreshSkins()
 		applyNow(current)
-		setStatus("Back to your own skin for the " .. current .. ". Switch weapons and back if it doesn't change right away.", "good")
+		setStatus("Back to your own skin for the " .. (displayOf[current] or current) .. ". Switch weapons and back if it doesn't change right away.", "good")
 	end)
 	local shown = 0
-	for _, s in ipairs(skinsFor(current)) do
+	for _, s in ipairs(list) do
 		if q == "" or string.find(string.lower(s.display), q, 1, true) or string.find(string.lower(s.rarity), q, 1, true) then
 			shown += 1
 			local on = sel[current] == s.name
-			local b = row(sCol, s.display, on and "in use" or s.rarity, on, s.color)
-			skinBtns[#skinBtns + 1] = b
+			local b = row(right.scroll, s.display, on and "in use" or s.rarity, on, s.color)
+			skinRows[#skinRows + 1] = b
 			b.MouseButton1Click:Connect(function()
-				if sel[current] == s.name then sel[current] = nil else sel[current] = s.name end
+				local w = current
+				if sel[w] == s.name then sel[w] = nil else sel[w] = s.name end
 				save(); refreshWeapons(); refreshSkins()
-				if sel[current] then
-					local ok = applyNow(current)
-					setStatus(ok and ("Applied to the " .. current .. " in your hands.") or ("Saved. Switch to another weapon and back to see it on the " .. current .. "."), "good")
+				local ok = applyNow(w)
+				if sel[w] then
+					setStatus(ok and ("Applied to the " .. (displayOf[w] or w) .. " in your hands.") or ("Saved. Switch to another weapon and back to see it on the " .. (displayOf[w] or w) .. "."), "good")
 				else
-					applyNow(current)
 					setStatus("Turned off. Your own skin comes back when you re-equip.", "good")
 				end
 			end)
 		end
 	end
-	if shown == 0 then note("No skins match \"" .. (searchBox.Text or "") .. "\".") end
+	right.title.Text = "SKINS FOR " .. string.upper(displayOf[current] or current) .. "  (" .. (q == "" and #list or (shown .. " of " .. #list)) .. ")"
+	if shown == 0 then note(right.scroll, "No skins match \"" .. (right.search.Text or "") .. "\".", skinRows) end
 end
 
-keep(searchBox:GetPropertyChangedSignal("Text"):Connect(function() if current and current ~= STYLE_ENTRY then refreshSkins() end end))
+local function setTab(name)
+	tab = name
+	layout(); updateTabs(); refreshSkins()
+end
+tabSkins.MouseButton1Click:Connect(function() setTab("skins") end)
+tabKnife.MouseButton1Click:Connect(function() setTab("knife") end)
+
+keep(left.search:GetPropertyChangedSignal("Text"):Connect(refreshWeapons))
+keep(right.search:GetPropertyChangedSignal("Text"):Connect(function() if tab == "skins" then refreshSkins() end end))
 
 resetOne.MouseButton1Click:Connect(function()
+	if tab == "knife" then chooseStyle(nil); return end
 	if not current then return end
-	if current == STYLE_ENTRY then chooseStyle(nil); return end
-	sel[current] = nil; save(); refreshWeapons(); refreshSkins(); applyNow(current)
-	setStatus("Reset the " .. current .. ".", "good")
+	local w = current
+	sel[w] = nil; save(); refreshWeapons(); refreshSkins(); applyNow(w)
+	setStatus("Reset the " .. (displayOf[w] or w) .. ".", "good")
 end)
 resetAll.MouseButton1Click:Connect(function()
 	local seen = sel.__seenHelp
 	for k in pairs(sel) do sel[k] = nil end
 	sel.__seenHelp = seen
 	g(setStyle, nil)
-	save(); refreshWeapons(); refreshSkins()
+	save(); updateTabs(); refreshWeapons(); refreshSkins()
 	setStatus("Everything is back to normal. Switch weapons and back to see it.", "good")
 end)
 
 -- help card (shown the first time, and with the ? button)
 local help = make("Frame", {
-	Size = UDim2.fromOffset(420, 250), Position = UDim2.new(0.5, -210, 0.5, -125), BackgroundColor3 = C.panel, BorderSizePixel = 0,
+	Size = UDim2.fromOffset(440, 270), Position = UDim2.new(0.5, -220, 0.5, -135), BackgroundColor3 = C.panel, BorderSizePixel = 0,
 	Visible = false, ZIndex = 20,
 }, win)
 corner(help, 10)
 make("UIStroke", { Color = C.sel, Thickness = 1.5 }, help)
 local helpText = text(help,
-	"How it works\n\n1.  Pick a weapon on the left.\n2.  Click a skin on the right. Click it again to turn it off.\n3.  Switch to another weapon and back. Skins are applied when a weapon is equipped.\n\n\"Knife look\" lets your Knife use the model and animations of a Karambit, Butterfly and more.\n\nOnly you see these changes. Your inventory and what other players see are not touched.\n\nRightShift hides or shows this window.",
+	"How it works\n\n1.  Pick a weapon on the left (use the search box if the list is long).\n2.  Click a skin on the right. Click it again to turn it off.\n3.  Switch to another weapon and back. Skins are applied when a weapon is equipped.\n\nThe \"Knife look\" tab lets your Knife use the model and animations of a Karambit, Butterfly and more.\n\nOnly you see these changes. Your inventory and what other players see are not touched.\n\nRightShift hides or shows this window.",
 	13, C.text, UDim2.fromOffset(18, 14), UDim2.new(1, -36, 1, -64))
 helpText.ZIndex = 21
 helpText.TextYAlignment = Enum.TextYAlignment.Top
@@ -485,8 +552,11 @@ if sel.__style then
 	if not (ok and res) then sel.__style = nil end
 end
 
-current = entries[1]
-refreshWeapons(); refreshSkins()
+do
+	local guns, mel = groups("")
+	current = guns[1] or mel[1]
+end
+layout(); updateTabs(); refreshWeapons(); refreshSkins()
 if sel.__seenHelp then
 	setStatus("Pick a weapon, click a skin, then switch weapons and back. Only you see the change.")
 else
