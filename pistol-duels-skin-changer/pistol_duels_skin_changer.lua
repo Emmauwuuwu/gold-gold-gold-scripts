@@ -80,7 +80,8 @@ local hideArms = false
 -- effect settings (the Effects tab): bullet tracers on your own shots, and a spin on your own weapon model
 local tr = { on = false, color = "Cyan", thick = 0.12, life = 0.6, glow = true, streak = false, replace = true }
 local spin = { on = false, speed = 180, dir = 1, axis = "Y", mode = "Continuous" }
-local st = { on = false, amount = 0.35 }   -- stretched resolution (Display tab)
+local st = { on = false, amount = 0.35 }
+local hud = { on = false, keys = true, stats = true, px = 24, py = 240 }   -- keystrokes + FPS/ping overlay   -- stretched resolution (Display tab)
 local function mergeInto(dst, src)
 	if type(src) ~= "table" then return end
 	for k, v in pairs(dst) do if type(src[k]) == type(v) then dst[k] = src[k] end end
@@ -94,14 +95,14 @@ pcall(function()
 			for k, v in pairs(type(d.wear) == "table" and d.wear or {}) do if type(v) == "number" then wear[k] = v end end
 			seenHelp = d.seenHelp == true
 			hideArms = d.hideArms == true
-			mergeInto(tr, d.tr); mergeInto(spin, d.spin); mergeInto(st, d.st)
+			mergeInto(tr, d.tr); mergeInto(spin, d.spin); mergeInto(st, d.st); mergeInto(hud, d.hud)
 		end
 	end
 end)
 local function save()
 	pcall(function()
 		if type(writefile) == "function" then
-			writefile(SAVE_FILE, HttpService:JSONEncode({ sel = sel, pat = pat, wear = wear, seenHelp = seenHelp, hideArms = hideArms, tr = tr, spin = spin, st = st }))
+			writefile(SAVE_FILE, HttpService:JSONEncode({ sel = sel, pat = pat, wear = wear, seenHelp = seenHelp, hideArms = hideArms, tr = tr, spin = spin, st = st, hud = hud }))
 		end
 	end)
 end
@@ -523,6 +524,7 @@ local function inputBox(parent, pos, sz, placeholder)
 	return t
 end
 
+local applyHud
 local W, H = 640, 500
 local win = make("Frame", {
 	Size = UDim2.fromOffset(W, H), Position = UDim2.new(0.5, -W / 2, 0.5, -H / 2), BackgroundColor3 = C.bg,
@@ -950,6 +952,88 @@ segmented(spCard, 146, "Axis", { { id = "X", text = "X  tilt" }, { id = "Y", tex
 segmented(spCard, 200, "Behavior", { { id = "Continuous", text = "Continuous" }, { id = "Swing", text = "Swing" }, { id = "On equip", text = "On equip" } }, function() return spin.mode end, function(v) spin.mode = v end)
 text(spCard, "Only the weapon in your view turns. Nothing else about the game changes.", 11, C.dim, UDim2.fromOffset(14, 254), UDim2.new(1, -28, 0, 30))
 
+-- ===================== overlay: keystrokes + FPS / ping =====================
+-- A small box you can drag anywhere. It stays on screen when the main window is hidden (RightShift).
+local hudFrame = make("Frame", {
+	Position = UDim2.fromOffset(hud.px, hud.py), Size = UDim2.fromOffset(132, 40), BackgroundColor3 = C.bg,
+	BackgroundTransparency = 0.3, BorderSizePixel = 0, Visible = false, Active = true,
+}, gui)
+corner(hudFrame, 10); stroke(hudFrame, 0.86)
+local hudStats = text(hudFrame, "-- FPS", 12, C.text, UDim2.fromOffset(6, 6), UDim2.new(1, -12, 0, 18), Enum.TextXAlignment.Center, Enum.Font.GothamMedium)
+local keysHolder = make("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 30), Size = UDim2.new(1, 0, 0, 132) }, hudFrame)
+local keyBoxes = {}
+local function keyBox(label, x, y, w, h, test)
+	local f = make("Frame", { Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h), BackgroundColor3 = C.white, BackgroundTransparency = 0.9, BorderSizePixel = 0 }, keysHolder)
+	corner(f, 6)
+	text(f, label, 12, C.text, UDim2.new(), UDim2.fromScale(1, 1), Enum.TextXAlignment.Center, Enum.Font.GothamMedium)
+	keyBoxes[#keyBoxes + 1] = { frame = f, test = test, down = false }
+end
+local function kd(code) return function() return UIS:IsKeyDown(code) end end
+local function md(btn) return function() return UIS:IsMouseButtonPressed(btn) end end
+keyBox("W", 49, 0, 34, 34, kd(Enum.KeyCode.W))
+keyBox("A", 8, 38, 34, 34, kd(Enum.KeyCode.A))
+keyBox("S", 49, 38, 34, 34, kd(Enum.KeyCode.S))
+keyBox("D", 90, 38, 34, 34, kd(Enum.KeyCode.D))
+keyBox("LMB", 8, 76, 56, 26, md(Enum.UserInputType.MouseButton1))
+keyBox("RMB", 68, 76, 56, 26, md(Enum.UserInputType.MouseButton2))
+keyBox("Shift", 8, 106, 56, 26, function() return UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift) end)
+keyBox("Space", 68, 106, 56, 26, kd(Enum.KeyCode.Space))
+function applyHud()
+	hudFrame.Visible = hud.on and (hud.keys or hud.stats)
+	hudStats.Visible = hud.stats
+	keysHolder.Visible = hud.keys
+	local top = 6 + (hud.stats and 24 or 0)
+	keysHolder.Position = UDim2.fromOffset(0, top)
+	hudFrame.Size = UDim2.fromOffset(132, top + (hud.keys and 138 or 0) + (hud.stats and not hud.keys and 0 or 0))
+end
+do
+	local acc, frames = 0, 0
+	keep(RunService.Heartbeat:Connect(function(dt)
+		if not hud.on then return end
+		if hud.keys then
+			for _, k in ipairs(keyBoxes) do
+				local d = k.test()
+				if d ~= k.down then
+					k.down = d
+					k.frame.BackgroundColor3 = d and C.accent or C.white
+					k.frame.BackgroundTransparency = d and 0.15 or 0.9
+				end
+			end
+		end
+		if hud.stats then
+			acc += dt; frames += 1
+			if acc >= 0.5 then
+				local fps = math.floor(frames / acc + 0.5)
+				acc, frames = 0, 0
+				local ok, ms = pcall(function() return game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue() end)
+				hudStats.Text = fps .. " FPS  ·  " .. (ok and math.floor(ms + 0.5) or 0) .. " ms"
+			end
+		end
+	end))
+	-- drag it anywhere (the mouse must be free: use the Free cursor switch in first person)
+	local dragging, startPos, startMouse
+	hudFrame.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true; startPos = hudFrame.Position; startMouse = i.Position end
+	end)
+	keep(UIS.InputChanged:Connect(function(i)
+		if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+			local d = i.Position - startMouse
+			hudFrame.Position = UDim2.fromOffset(startPos.X.Offset + d.X, startPos.Y.Offset + d.Y)
+		end
+	end))
+	keep(UIS.InputEnded:Connect(function(i)
+		if dragging and i.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = false
+			local vs, sz = gui.AbsoluteSize, hudFrame.AbsoluteSize
+			local x = math.clamp(hudFrame.Position.X.Offset, 0, math.max(vs.X - sz.X, 0))
+			local y = math.clamp(hudFrame.Position.Y.Offset, 0, math.max(vs.Y - sz.Y, 0))
+			hudFrame.Position = UDim2.fromOffset(x, y)
+			hud.px, hud.py = x, y
+			save()
+		end
+	end))
+end
+
 -- Display page: stretched resolution
 local dispPage = make("Frame", { Position = UDim2.fromOffset(14, 96), Size = UDim2.new(1, -28, 1, -156), BackgroundTransparency = 1, Visible = false }, win)
 local stCard = make("Frame", { Size = UDim2.new(0.5, -6, 1, 0), BackgroundColor3 = C.white, BackgroundTransparency = 0.95, BorderSizePixel = 0 }, dispPage)
@@ -959,10 +1043,21 @@ toggleAt(stCard, UDim2.new(1, -52, 0, 12), function() return st.on end, function
 slider(stCard, 48, "Stretch", 0, 0.7, 0.01, function() return st.amount end, function(v) st.amount = v end, function(v) return math.floor(v * 100 + 0.5) .. " %" end)
 text(stCard, "Makes everything look wider by flattening your view vertically, like a stretched monitor setting. Only your own screen changes; other players and the game are not affected. Your weapon and arms stretch with the view.", 12, C.dim, UDim2.fromOffset(14, 100), UDim2.new(1, -28, 0, 110))
 
+local ovCard = make("Frame", { Position = UDim2.new(0.5, 6, 0, 0), Size = UDim2.new(0.5, -6, 1, 0), BackgroundColor3 = C.white, BackgroundTransparency = 0.95, BorderSizePixel = 0 }, dispPage)
+corner(ovCard, 12); stroke(ovCard, 0.93)
+text(ovCard, "Overlay", 14, C.text, UDim2.fromOffset(14, 10), UDim2.new(1, -90, 0, 20), nil, Enum.Font.GothamBold)
+toggleAt(ovCard, UDim2.new(1, -52, 0, 12), function() return hud.on end, function(v) hud.on = v; applyHud() end)
+toggleRow(ovCard, 52, "Keystrokes", function() return hud.keys end, function(v) hud.keys = v; applyHud() end)
+toggleRow(ovCard, 82, "FPS and ping", function() return hud.stats end, function(v) hud.stats = v; applyHud() end)
+text(ovCard, "A small box with your movement keys, mouse buttons, FPS and ping. Drag it anywhere (turn on Free cursor first if you are in first person). It stays visible when you hide this window.", 12, C.dim, UDim2.fromOffset(14, 120), UDim2.new(1, -28, 0, 110))
+applyHud()
+
 local function defaults()
 	tr.on, tr.color, tr.thick, tr.life, tr.glow, tr.streak, tr.replace = false, "Cyan", 0.12, 0.6, true, false, true
 	spin.on, spin.speed, spin.dir, spin.axis, spin.mode = false, 180, 1, "Y", "Continuous"
 	st.on, st.amount = false, 0.35
+	hud.on, hud.keys, hud.stats = false, true, true
+	if applyHud then applyHud() end
 end
 
 local page = "skins"
@@ -993,7 +1088,7 @@ local help = make("Frame", {
 corner(help, 14)
 stroke(help, 0.2, C.accent, 1.5)
 local helpText = text(help,
-	"How it works\n\n1.  Pick a weapon on the left.\n2.  Click a skin on the right. Click it again to turn it off.\n3.  If you are holding that weapon it updates by itself (the script quickly switches away and back). If not, it shows the next time you equip it.\n4.  Patterned skins get a Pattern and Wear box. Type a number and press Enter, or hit Random.\n5.  \"Hide arms\" (top right) makes your arms invisible so nothing covers the skin.\n6.  The Effects tab has bullet tracers (color, thickness, lifetime, glow) and a weapon spin (speed, direction, axis, behavior). The Display tab has stretched resolution.\n\nA skin only shows on a weapon that is in your loadout. Only you see these changes. \"Free cursor\" (top right, or RightCtrl) keeps the mouse unlocked in first person so you never need Esc.\n\nRightShift hides or shows this window. There is no on-screen tab while it is hidden.",
+	"How it works\n\n1.  Pick a weapon on the left.\n2.  Click a skin on the right. Click it again to turn it off.\n3.  If you are holding that weapon it updates by itself (the script quickly switches away and back). If not, it shows the next time you equip it.\n4.  Patterned skins get a Pattern and Wear box. Type a number and press Enter, or hit Random.\n5.  \"Hide arms\" (top right) makes your arms invisible so nothing covers the skin.\n6.  The Effects tab has bullet tracers (color, thickness, lifetime, glow) and a weapon spin (speed, direction, axis, behavior). The Display tab has stretched resolution and a draggable overlay with keystrokes, FPS and ping.\n\nA skin only shows on a weapon that is in your loadout. Only you see these changes. \"Free cursor\" (top right, or RightCtrl) keeps the mouse unlocked in first person so you never need Esc.\n\nRightShift hides or shows this window. There is no on-screen tab while it is hidden.",
 	13, C.text, UDim2.fromOffset(20, 16), UDim2.new(1, -40, 1, -70))
 helpText.ZIndex = 21
 helpText.TextYAlignment = Enum.TextYAlignment.Top
@@ -1050,6 +1145,6 @@ _G.PistolDuelsSkinChanger = {
 	unload = unload, sel = sel, pat = pat, wear = wear, hits = function() return hits end, reEquip = reEquip,
 	setHideArms = setHideArms, hideArms = function() return hideArms end,
 	setFreeCursor = setFreeCursor, freeCursor = function() return freeCursor end,
-	tr = tr, spin = spin, st = st, tracer = spawnTracer,
+	tr = tr, spin = spin, st = st, hud = hud, tracer = spawnTracer,
 }
 print(("[SkinChanger] ready: %d weapons, %d skins"):format(#weapons, (function() local n = 0 for _, l in pairs(skinsOf) do n += #l end return n end)()))
