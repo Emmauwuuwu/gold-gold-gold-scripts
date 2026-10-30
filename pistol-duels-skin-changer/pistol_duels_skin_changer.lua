@@ -442,7 +442,7 @@ local function stepFx() guarded("tracers", stepTracers); guarded("spin", stepSpi
 do local okB, eB = pcall(function() RunService:BindToRenderStep("PDSkinChangerFx", Enum.RenderPriority.Last.Value + 2, stepFx) end); if not okB then warn("[SkinChanger] could not start PDSkinChangerFx: " .. tostring(eB)) end end
 
 -- ===================== stretched resolution =====================
--- Squeezes your camera sideways so everything looks wider, like a stretched resolution. Only your own screen changes.
+-- Stretches your camera sideways so everything looks wider, like a stretched resolution. Only your own screen changes.
 -- The stretch is taken off again right before the game's camera code runs each frame, so the game never sees it.
 local stretchedCF, cleanCF = nil, nil
 local function unstretch()
@@ -454,7 +454,7 @@ local function applyStretch()
 	local cam = workspace.CurrentCamera
 	if not (cam and st.on) then return end
 	cleanCF = cam.CFrame
-	stretchedCF = cleanCF * CFrame.new(0, 0, 0, 1 - math.clamp(st.amount, 0, 0.7), 0, 0, 0, 1, 0, 0, 0, 1)
+	stretchedCF = cleanCF * CFrame.new(0, 0, 0, 1 + math.clamp(st.amount, 0, 0.7), 0, 0, 0, 1, 0, 0, 0, 1)
 	cam.CFrame = stretchedCF
 end
 do local okB, eB = pcall(function() RunService:BindToRenderStep("PDSkinChangerStretchA", 1, unstretch) end); if not okB then warn("[SkinChanger] could not start stretch: " .. tostring(eB)) end end
