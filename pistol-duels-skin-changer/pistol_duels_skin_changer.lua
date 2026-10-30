@@ -81,7 +81,8 @@ local hideArms = false
 local tr = { on = false, color = "Cyan", thick = 0.12, life = 0.6, glow = true, streak = false, replace = true }
 local spin = { on = false, speed = 180, dir = 1, axis = "Y", mode = "Continuous" }
 local st = { on = false, amount = 0.35 }
-local hud = { on = false, keys = true, stats = true, px = 24, py = 240 }   -- keystrokes + FPS/ping overlay   -- stretched resolution (Display tab)
+local hud = { on = false, keys = true, stats = true, px = 24, py = 240 }
+local sh = { on = false, color = "Cyan", fill = 0.65, outline = 0.0, onTop = true }   -- highlight on your own character (Display tab)   -- keystrokes + FPS/ping overlay   -- stretched resolution (Display tab)
 local function mergeInto(dst, src)
 	if type(src) ~= "table" then return end
 	for k, v in pairs(dst) do if type(src[k]) == type(v) then dst[k] = src[k] end end
@@ -95,14 +96,14 @@ pcall(function()
 			for k, v in pairs(type(d.wear) == "table" and d.wear or {}) do if type(v) == "number" then wear[k] = v end end
 			seenHelp = d.seenHelp == true
 			hideArms = d.hideArms == true
-			mergeInto(tr, d.tr); mergeInto(spin, d.spin); mergeInto(st, d.st); mergeInto(hud, d.hud)
+			mergeInto(tr, d.tr); mergeInto(spin, d.spin); mergeInto(st, d.st); mergeInto(hud, d.hud); mergeInto(sh, d.sh)
 		end
 	end
 end)
 local function save()
 	pcall(function()
 		if type(writefile) == "function" then
-			writefile(SAVE_FILE, HttpService:JSONEncode({ sel = sel, pat = pat, wear = wear, seenHelp = seenHelp, hideArms = hideArms, tr = tr, spin = spin, st = st, hud = hud }))
+			writefile(SAVE_FILE, HttpService:JSONEncode({ sel = sel, pat = pat, wear = wear, seenHelp = seenHelp, hideArms = hideArms, tr = tr, spin = spin, st = st, hud = hud, sh = sh }))
 		end
 	end)
 end
@@ -1034,29 +1035,83 @@ do
 	end))
 end
 
+-- Self highlight: an outline/fill on YOUR OWN character only (no other players)
+local shHl
+local function shColor()
+	return sh.color == "Rainbow" and Color3.fromHSV((os.clock() * 0.7) % 1, 0.85, 1) or TRACER_COLORS[sh.color] or TRACER_COLORS.Cyan
+end
+local function stepSelf()
+	local ch = lp.Character
+	if not sh.on or not ch then
+		if shHl then shHl.Enabled = false end
+		return
+	end
+	if not shHl or not shHl.Parent then
+		shHl = Instance.new("Highlight")
+		shHl.Name = "PDSkinChangerSelf"
+		shHl.Parent = gui
+	end
+	if shHl.Adornee ~= ch then shHl.Adornee = ch end
+	local c = shColor()
+	shHl.Enabled = true
+	shHl.FillColor = c; shHl.OutlineColor = c
+	shHl.FillTransparency = sh.fill; shHl.OutlineTransparency = sh.outline
+	shHl.DepthMode = sh.onTop and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
+end
+do local okB, eB = pcall(function() RunService:BindToRenderStep("PDSkinChangerSelf", Enum.RenderPriority.Last.Value + 4, function() guarded("self", stepSelf) end) end); if not okB then warn("[SkinChanger] could not start self highlight: " .. tostring(eB)) end end
+
 -- Display page: stretched resolution
 local dispPage = make("Frame", { Position = UDim2.fromOffset(14, 96), Size = UDim2.new(1, -28, 1, -156), BackgroundTransparency = 1, Visible = false }, win)
-local stCard = make("Frame", { Size = UDim2.new(0.5, -6, 1, 0), BackgroundColor3 = C.white, BackgroundTransparency = 0.95, BorderSizePixel = 0 }, dispPage)
+local stCard = make("Frame", { Size = UDim2.new(1 / 3, -8, 1, 0), BackgroundColor3 = C.white, BackgroundTransparency = 0.95, BorderSizePixel = 0 }, dispPage)
 corner(stCard, 12); stroke(stCard, 0.93)
 text(stCard, "Stretched resolution", 14, C.text, UDim2.fromOffset(14, 10), UDim2.new(1, -90, 0, 20), nil, Enum.Font.GothamBold)
 toggleAt(stCard, UDim2.new(1, -52, 0, 12), function() return st.on end, function(v) st.on = v end)
 slider(stCard, 48, "Stretch", 0, 0.7, 0.01, function() return st.amount end, function(v) st.amount = v end, function(v) return math.floor(v * 100 + 0.5) .. " %" end)
-text(stCard, "Makes everything look wider by flattening your view vertically, like a stretched monitor setting. Only your own screen changes; other players and the game are not affected. Your weapon and arms stretch with the view.", 12, C.dim, UDim2.fromOffset(14, 100), UDim2.new(1, -28, 0, 110))
+text(stCard, "Makes everything look wider by flattening your view vertically, like a stretched monitor setting. Only your own screen changes; other players and the game are not affected. Your weapon and arms stretch with the view.", 12, C.dim, UDim2.fromOffset(14, 100), UDim2.new(1, -28, 0, 150))
 
-local ovCard = make("Frame", { Position = UDim2.new(0.5, 6, 0, 0), Size = UDim2.new(0.5, -6, 1, 0), BackgroundColor3 = C.white, BackgroundTransparency = 0.95, BorderSizePixel = 0 }, dispPage)
+local ovCard = make("Frame", { Position = UDim2.new(1 / 3, 4, 0, 0), Size = UDim2.new(1 / 3, -8, 1, 0), BackgroundColor3 = C.white, BackgroundTransparency = 0.95, BorderSizePixel = 0 }, dispPage)
 corner(ovCard, 12); stroke(ovCard, 0.93)
 text(ovCard, "Overlay", 14, C.text, UDim2.fromOffset(14, 10), UDim2.new(1, -90, 0, 20), nil, Enum.Font.GothamBold)
 toggleAt(ovCard, UDim2.new(1, -52, 0, 12), function() return hud.on end, function(v) hud.on = v; applyHud() end)
 toggleRow(ovCard, 52, "Keystrokes", function() return hud.keys end, function(v) hud.keys = v; applyHud() end)
 toggleRow(ovCard, 82, "FPS and ping", function() return hud.stats end, function(v) hud.stats = v; applyHud() end)
-text(ovCard, "A small box with your movement keys, mouse buttons, FPS and ping. Drag it anywhere (turn on Free cursor first if you are in first person). It stays visible when you hide this window.", 12, C.dim, UDim2.fromOffset(14, 120), UDim2.new(1, -28, 0, 110))
+text(ovCard, "A small box with your movement keys, mouse buttons, FPS and ping. Drag it anywhere (turn on Free cursor first if you are in first person). It stays visible when you hide this window.", 12, C.dim, UDim2.fromOffset(14, 120), UDim2.new(1, -28, 0, 150))
 applyHud()
+
+local shCard = make("Frame", { Position = UDim2.new(2 / 3, 8, 0, 0), Size = UDim2.new(1 / 3, -8, 1, 0), BackgroundColor3 = C.white, BackgroundTransparency = 0.95, BorderSizePixel = 0 }, dispPage)
+corner(shCard, 12); stroke(shCard, 0.93)
+text(shCard, "Self highlight", 14, C.text, UDim2.fromOffset(14, 10), UDim2.new(1, -90, 0, 20), nil, Enum.Font.GothamBold)
+toggleAt(shCard, UDim2.new(1, -52, 0, 12), function() return sh.on end, function(v) sh.on = v end)
+text(shCard, "Color", 12, C.dim, UDim2.fromOffset(14, 40), UDim2.new(1, -28, 0, 16))
+local shSw = {}
+for i, name in ipairs(COLOR_ORDER) do
+	local b = make("TextButton", {
+		Text = name == "Rainbow" and "R" or "", Position = UDim2.fromOffset(14 + (i - 1) * 26, 58), Size = UDim2.fromOffset(20, 20),
+		BackgroundColor3 = TRACER_COLORS[name] or Color3.fromRGB(255, 160, 60), AutoButtonColor = false, TextColor3 = C.bg,
+		Font = Enum.Font.GothamBold, TextSize = 11,
+	}, shCard)
+	corner(b, 10)
+	local ring = make("UIStroke", { Color = C.text, Thickness = 2, Transparency = 1 }, b)
+	shSw[name] = ring
+	b.MouseButton1Click:Connect(function()
+		sh.color = name
+		for n2, r2 in pairs(shSw) do r2.Transparency = (n2 == sh.color) and 0 or 1 end
+		save()
+	end)
+end
+repaints[#repaints + 1] = function() for n2, r2 in pairs(shSw) do r2.Transparency = (n2 == sh.color) and 0 or 1 end end
+for n2, r2 in pairs(shSw) do r2.Transparency = (n2 == sh.color) and 0 or 1 end
+slider(shCard, 90, "Fill", 0, 1, 0.05, function() return 1 - sh.fill end, function(v) sh.fill = 1 - v end, function(v) return math.floor(v * 100 + 0.5) .. " %" end)
+slider(shCard, 130, "Outline", 0, 1, 0.05, function() return 1 - sh.outline end, function(v) sh.outline = 1 - v end, function(v) return math.floor(v * 100 + 0.5) .. " %" end)
+toggleRow(shCard, 172, "Visible through walls", function() return sh.onTop end, function(v) sh.onTop = v end)
+text(shCard, "Outlines and tints your own character, like a glow. Only you and only your character: other players are not affected and nothing about them is shown. In first person you mostly see it on your arms and legs.", 12, C.dim, UDim2.fromOffset(14, 204), UDim2.new(1, -28, 0, 110))
 
 local function defaults()
 	tr.on, tr.color, tr.thick, tr.life, tr.glow, tr.streak, tr.replace = false, "Cyan", 0.12, 0.6, true, false, true
 	spin.on, spin.speed, spin.dir, spin.axis, spin.mode = false, 180, 1, "Y", "Continuous"
 	st.on, st.amount = false, 0.35
 	hud.on, hud.keys, hud.stats = false, true, true
+	sh.on, sh.color, sh.fill, sh.outline, sh.onTop = false, "Cyan", 0.65, 0, true
 	if applyHud then applyHud() end
 end
 
@@ -1088,7 +1143,7 @@ local help = make("Frame", {
 corner(help, 14)
 stroke(help, 0.2, C.accent, 1.5)
 local helpText = text(help,
-	"How it works\n\n1.  Pick a weapon on the left.\n2.  Click a skin on the right. Click it again to turn it off.\n3.  If you are holding that weapon it updates by itself (the script quickly switches away and back). If not, it shows the next time you equip it.\n4.  Patterned skins get a Pattern and Wear box. Type a number and press Enter, or hit Random.\n5.  \"Hide arms\" (top right) makes your arms invisible so nothing covers the skin.\n6.  The Effects tab has bullet tracers (color, thickness, lifetime, glow) and a weapon spin (speed, direction, axis, behavior). The Display tab has stretched resolution and a draggable overlay with keystrokes, FPS and ping.\n\nA skin only shows on a weapon that is in your loadout. Only you see these changes. \"Free cursor\" (top right, or RightCtrl) keeps the mouse unlocked in first person so you never need Esc.\n\nRightShift hides or shows this window. There is no on-screen tab while it is hidden.",
+	"How it works\n\n1.  Pick a weapon on the left.\n2.  Click a skin on the right. Click it again to turn it off.\n3.  If you are holding that weapon it updates by itself (the script quickly switches away and back). If not, it shows the next time you equip it.\n4.  Patterned skins get a Pattern and Wear box. Type a number and press Enter, or hit Random.\n5.  \"Hide arms\" (top right) makes your arms invisible so nothing covers the skin.\n6.  The Effects tab has bullet tracers (color, thickness, lifetime, glow) and a weapon spin (speed, direction, axis, behavior). The Display tab has stretched resolution, a draggable overlay with keystrokes, FPS and ping, and a highlight for your own character.\n\nA skin only shows on a weapon that is in your loadout. Only you see these changes. \"Free cursor\" (top right, or RightCtrl) keeps the mouse unlocked in first person so you never need Esc.\n\nRightShift hides or shows this window. There is no on-screen tab while it is hidden.",
 	13, C.text, UDim2.fromOffset(20, 16), UDim2.new(1, -40, 1, -70))
 helpText.ZIndex = 21
 helpText.TextYAlignment = Enum.TextYAlignment.Top
@@ -1122,6 +1177,8 @@ local function unload()
 	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerArms") end)
 	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerCursor") end)
 	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerFx") end)
+	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerSelf") end)
+	pcall(function() if shHl then shHl:Destroy() end end)
 	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerStretchB") end)
 	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerStretchA") end)
 	st.on = false; pcall(unstretch)
@@ -1145,6 +1202,6 @@ _G.PistolDuelsSkinChanger = {
 	unload = unload, sel = sel, pat = pat, wear = wear, hits = function() return hits end, reEquip = reEquip,
 	setHideArms = setHideArms, hideArms = function() return hideArms end,
 	setFreeCursor = setFreeCursor, freeCursor = function() return freeCursor end,
-	tr = tr, spin = spin, st = st, hud = hud, tracer = spawnTracer,
+	tr = tr, spin = spin, st = st, hud = hud, sh = sh, tracer = spawnTracer,
 }
 print(("[SkinChanger] ready: %d weapons, %d skins"):format(#weapons, (function() local n = 0 for _, l in pairs(skinsOf) do n += #l end return n end)()))
