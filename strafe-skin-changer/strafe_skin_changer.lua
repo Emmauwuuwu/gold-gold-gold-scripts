@@ -27,10 +27,16 @@ local function keep(c) conns[#conns + 1] = c; return c end
 
 -- the game's modules can only be required from a thread with identity 2 (executors run at 8), so anything that
 -- touches them goes through g(): it runs the function in such a thread, waits for it, and returns pcall's results
+local setIdentity = (type(setthreadidentity) == "function" and setthreadidentity)
+	or (type(set_thread_identity) == "function" and set_thread_identity)
+	or (type(setidentity) == "function" and setidentity)
+	or (type(setthreadcontext) == "function" and setthreadcontext)
+	or (type(syn) == "table" and type(syn.set_thread_identity) == "function" and syn.set_thread_identity)
+	or nil
 local function g(fn, ...)
 	local args, res, done = table.pack(...), nil, false
 	task.spawn(function()
-		if type(setthreadidentity) == "function" then pcall(setthreadidentity, 2) end
+		if setIdentity then pcall(setIdentity, 2) end
 		res = table.pack(pcall(fn, table.unpack(args, 1, args.n)))
 		done = true
 	end)
@@ -50,7 +56,13 @@ g(function()
 	if okW then WC = w end
 end)
 if not (SM and SC) then
-	warn("[SkinChanger] This doesn't look like STRAFE FPS (its skin scripts were not found), so nothing was changed.")
+	local combat = RS:FindFirstChild("Classes") and RS.Classes:FindFirstChild("Combat")
+	if combat and combat:FindFirstChild("SkinManager") then
+		warn("[SkinChanger] Your executor can't run the game's own scripts" .. (setIdentity and "" or " (it has no setthreadidentity)")
+			.. ", which this script needs. Try an executor that supports setthreadidentity / require on game modules. Nothing was changed.")
+	else
+		warn("[SkinChanger] This doesn't look like STRAFE FPS (its skin scripts were not found), so nothing was changed.")
+	end
 	return
 end
 
