@@ -82,6 +82,7 @@ local tr = { on = false, color = "Cyan", thick = 0.12, life = 0.6, glow = true, 
 local spin = { on = false, speed = 180, dir = 1, axis = "Y", mode = "Continuous" }
 local st = { on = false, amount = 0.35 }
 local hud = { on = false, keys = true, stats = true, px = 24, py = 240 }
+local wd = { on = false, preset = "Natural", tint = 1, sat = 0, con = 0, dark = 0, bloom = 0, rays = 0 }   -- World look (World tab)
 local sh = { on = false, color = "Cyan", fill = 0.65, outline = 0.0, onTop = true }   -- highlight on your own character (Display tab)   -- keystrokes + FPS/ping overlay   -- stretched resolution (Display tab)
 local function mergeInto(dst, src)
 	if type(src) ~= "table" then return end
@@ -96,14 +97,14 @@ pcall(function()
 			for k, v in pairs(type(d.wear) == "table" and d.wear or {}) do if type(v) == "number" then wear[k] = v end end
 			seenHelp = d.seenHelp == true
 			hideArms = d.hideArms == true
-			mergeInto(tr, d.tr); mergeInto(spin, d.spin); mergeInto(st, d.st); mergeInto(hud, d.hud); mergeInto(sh, d.sh)
+			mergeInto(tr, d.tr); mergeInto(spin, d.spin); mergeInto(st, d.st); mergeInto(hud, d.hud); mergeInto(sh, d.sh); mergeInto(wd, d.wd)
 		end
 	end
 end)
 local function save()
 	pcall(function()
 		if type(writefile) == "function" then
-			writefile(SAVE_FILE, HttpService:JSONEncode({ sel = sel, pat = pat, wear = wear, seenHelp = seenHelp, hideArms = hideArms, tr = tr, spin = spin, st = st, hud = hud, sh = sh }))
+			writefile(SAVE_FILE, HttpService:JSONEncode({ sel = sel, pat = pat, wear = wear, seenHelp = seenHelp, hideArms = hideArms, tr = tr, spin = spin, st = st, hud = hud, sh = sh, wd = wd }))
 		end
 	end)
 end
@@ -630,6 +631,7 @@ end
 local tabSkins = button(win, "Skins", UDim2.fromOffset(14, 58), UDim2.fromOffset(92, 28))
 local tabFx = button(win, "Effects", UDim2.fromOffset(112, 58), UDim2.fromOffset(92, 28))
 local tabDisp = button(win, "Display", UDim2.fromOffset(210, 58), UDim2.fromOffset(92, 28))
+local tabWorld = button(win, "World", UDim2.fromOffset(308, 58), UDim2.fromOffset(92, 28))
 
 -- two glass panels: weapons (left) and skins (right)
 local function column(title)
@@ -1035,6 +1037,54 @@ do
 	end))
 end
 
+-- World look: your own color grade, bloom and sun rays layered on top of the game's lighting. Local only, nothing in the map is changed.
+local PRESETS = {
+	{ id = "Natural", tint = Color3.fromRGB(255, 255, 255), sat = 0,    con = 0,    dark = 0,    bloom = 0,   rays = 0 },
+	{ id = "Sunset",  tint = Color3.fromRGB(255, 190, 140), sat = 0.15, con = 0.08, dark = 0,    bloom = 0.4, rays = 0.15 },
+	{ id = "Neon",    tint = Color3.fromRGB(170, 140, 255), sat = 0.35, con = 0.15, dark = 0.12, bloom = 1.0, rays = 0 },
+	{ id = "Frost",   tint = Color3.fromRGB(170, 210, 255), sat = -0.1, con = 0.05, dark = 0,    bloom = 0.3, rays = 0 },
+	{ id = "Mono",    tint = Color3.fromRGB(255, 255, 255), sat = -1,   con = 0.2,  dark = 0,    bloom = 0,   rays = 0 },
+	{ id = "Vintage", tint = Color3.fromRGB(255, 225, 180), sat = -0.3, con = 0.1,  dark = 0.05, bloom = 0.2, rays = 0 },
+	{ id = "Toxic",   tint = Color3.fromRGB(170, 255, 170), sat = 0.3,  con = 0.12, dark = 0.08, bloom = 0.6, rays = 0 },
+	{ id = "Rose",    tint = Color3.fromRGB(255, 170, 205), sat = 0.2,  con = 0.06, dark = 0,    bloom = 0.5, rays = 0.1 },
+}
+local PRESET_BY = {}
+for _, p in ipairs(PRESETS) do PRESET_BY[p.id] = p end
+local wGrade, wBloom, wRays
+local function worldGone(i) return not i or not i.Parent end
+local function applyWorld()
+	local L = game:GetService("Lighting")
+	if not wd.on then
+		if wGrade then wGrade.Enabled = false end
+		if wBloom then wBloom.Enabled = false end
+		if wRays then wRays.Enabled = false end
+		return
+	end
+	if worldGone(wGrade) then wGrade = Instance.new("ColorCorrectionEffect"); wGrade.Name = "PDWorldGrade"; wGrade.Parent = L end
+	if worldGone(wBloom) then wBloom = Instance.new("BloomEffect"); wBloom.Name = "PDWorldBloom"; wBloom.Size = 24; wBloom.Threshold = 1; wBloom.Parent = L end
+	if worldGone(wRays) then wRays = Instance.new("SunRaysEffect"); wRays.Name = "PDWorldRays"; wRays.Spread = 0.8; wRays.Parent = L end
+	local pr = PRESET_BY[wd.preset] or PRESETS[1]
+	wGrade.Enabled = true
+	wGrade.TintColor = Color3.new(1, 1, 1):Lerp(pr.tint, math.clamp(wd.tint, 0, 1))
+	wGrade.Saturation = math.clamp(wd.sat, -1, 1)
+	wGrade.Contrast = math.clamp(wd.con, 0, 0.5)
+	wGrade.Brightness = -math.clamp(wd.dark, 0, 0.4)   -- can only darken, never brighten
+	wBloom.Intensity = math.clamp(wd.bloom, 0, 2); wBloom.Enabled = wd.bloom > 0
+	wRays.Intensity = math.clamp(wd.rays, 0, 0.5); wRays.Enabled = wd.rays > 0
+end
+local function setPreset(id)
+	local pr = PRESET_BY[id]; if not pr then return end
+	wd.preset, wd.tint, wd.sat, wd.con, wd.dark, wd.bloom, wd.rays = id, 1, pr.sat, pr.con, pr.dark, pr.bloom, pr.rays
+	applyWorld()
+end
+do
+	local acc = 0
+	keep(RunService.Heartbeat:Connect(function(dt)
+		acc += dt
+		if acc >= 0.5 then acc = 0; if wd.on then guarded("world", applyWorld) end end
+	end))
+end
+
 -- Self highlight: an outline/fill on YOUR OWN character only (no other players)
 local shHl
 local function shColor()
@@ -1106,12 +1156,64 @@ slider(shCard, 130, "Outline", 0, 1, 0.05, function() return 1 - sh.outline end,
 toggleRow(shCard, 172, "Visible through walls", function() return sh.onTop end, function(v) sh.onTop = v end)
 text(shCard, "Outlines and tints your own character, like a glow. Only you and only your character: other players are not affected and nothing about them is shown. In first person you mostly see it on your arms and legs.", 12, C.dim, UDim2.fromOffset(14, 204), UDim2.new(1, -28, 0, 110))
 
+-- World page
+local worldPage = make("Frame", { Position = UDim2.fromOffset(14, 96), Size = UDim2.new(1, -28, 1, -156), BackgroundTransparency = 1, Visible = false }, win)
+local wlCard = make("Frame", { Size = UDim2.new(0.5, -6, 1, 0), BackgroundColor3 = C.white, BackgroundTransparency = 0.95, BorderSizePixel = 0 }, worldPage)
+corner(wlCard, 12); stroke(wlCard, 0.93)
+text(wlCard, "World look", 14, C.text, UDim2.fromOffset(14, 10), UDim2.new(1, -90, 0, 20), nil, Enum.Font.GothamBold)
+toggleAt(wlCard, UDim2.new(1, -52, 0, 12), function() return wd.on end, function(v) wd.on = v; applyWorld() end)
+text(wlCard, "Pick a look. It works in the lobby and in matches and changes only your own screen. You can fine tune it with the sliders on the right.", 12, C.dim, UDim2.fromOffset(14, 38), UDim2.new(1, -28, 0, 34))
+local pBtns = {}
+local function paintPresets()
+	for id, b in pairs(pBtns) do
+		local on = wd.preset == id
+		b.BackgroundColor3 = on and C.accent or C.white
+		b.BackgroundTransparency = on and 0.2 or 0.92
+	end
+end
+local pGrid = make("Frame", { Position = UDim2.fromOffset(14, 80), Size = UDim2.new(1, -28, 0, 80), BackgroundTransparency = 1 }, wlCard)
+make("UIGridLayout", { CellSize = UDim2.new(0.25, -3, 0, 36), CellPadding = UDim2.fromOffset(4, 8), SortOrder = Enum.SortOrder.LayoutOrder }, pGrid)
+for i, pr in ipairs(PRESETS) do
+	local b = make("TextButton", {
+		Text = pr.id, LayoutOrder = i, BackgroundColor3 = C.white, BackgroundTransparency = 0.92, TextColor3 = C.text,
+		Font = Enum.Font.GothamMedium, TextSize = 12, AutoButtonColor = false, TextXAlignment = Enum.TextXAlignment.Right,
+	}, pGrid)
+	corner(b, 8)
+	make("UIPadding", { PaddingRight = UDim.new(0, 8) }, b)
+	local dot = make("Frame", { Size = UDim2.fromOffset(10, 10), Position = UDim2.new(0, 8, 0.5, -5), BackgroundColor3 = pr.tint, BorderSizePixel = 0 }, b)
+	corner(dot, 5)
+	pBtns[pr.id] = b
+	b.MouseButton1Click:Connect(function()
+		wd.on = true; setPreset(pr.id)
+		for _, f in ipairs(repaints) do f() end
+		save()
+	end)
+end
+repaints[#repaints + 1] = paintPresets
+paintPresets()
+text(wlCard, "Brightness can only be lowered, never raised, so a look can make a map moodier but not easier to see into. Time of day and sky are left to the game so they do not fight its own map lighting.", 12, C.dim, UDim2.fromOffset(14, 176), UDim2.new(1, -28, 0, 90))
+
+local wsCard = make("Frame", { Position = UDim2.new(0.5, 6, 0, 0), Size = UDim2.new(0.5, -6, 1, 0), BackgroundColor3 = C.white, BackgroundTransparency = 0.95, BorderSizePixel = 0 }, worldPage)
+corner(wsCard, 12); stroke(wsCard, 0.93)
+text(wsCard, "Fine tune", 14, C.text, UDim2.fromOffset(14, 10), UDim2.new(1, -90, 0, 20), nil, Enum.Font.GothamBold)
+local function pct(v) return math.floor(v * 100 + 0.5) .. " %" end
+local function wslider(y, label, min, max, key, fmt)
+	slider(wsCard, y, label, min, max, 0.01, function() return wd[key] end, function(v) wd[key] = v; applyWorld() end, fmt or pct)
+end
+wslider(38, "Color strength", 0, 1, "tint")
+wslider(76, "Saturation", -1, 1, "sat")
+wslider(114, "Contrast", 0, 0.5, "con")
+wslider(152, "Darkness", 0, 0.4, "dark")
+wslider(190, "Glow", 0, 2, "bloom")
+wslider(228, "Sun rays", 0, 0.5, "rays")
+
 local function defaults()
 	tr.on, tr.color, tr.thick, tr.life, tr.glow, tr.streak, tr.replace = false, "Cyan", 0.12, 0.6, true, false, true
 	spin.on, spin.speed, spin.dir, spin.axis, spin.mode = false, 180, 1, "Y", "Continuous"
 	st.on, st.amount = false, 0.35
 	hud.on, hud.keys, hud.stats = false, true, true
 	sh.on, sh.color, sh.fill, sh.outline, sh.onTop = false, "Cyan", 0.65, 0, true
+	wd.on = false; setPreset("Natural")
 	if applyHud then applyHud() end
 end
 
@@ -1121,15 +1223,16 @@ local function setPage(name)
 	page = name
 	local skinsPage = (name == "skins")
 	left.frame.Visible = skinsPage; right.frame.Visible = skinsPage
-	fxPage.Visible = (name == "fx"); dispPage.Visible = (name == "display")
+	fxPage.Visible = (name == "fx"); dispPage.Visible = (name == "display"); worldPage.Visible = (name == "world")
 	reBtn.Visible = skinsPage; resetOne.Visible = skinsPage; resetAll.Visible = skinsPage; resetFx.Visible = not skinsPage
-	paintTab(tabSkins, skinsPage); paintTab(tabFx, name == "fx"); paintTab(tabDisp, name == "display")
+	paintTab(tabSkins, skinsPage); paintTab(tabFx, name == "fx"); paintTab(tabDisp, name == "display"); paintTab(tabWorld, name == "world")
 	setStatus(skinsPage and "Pick a weapon, click a skin. Only you see the change."
-		or (name == "fx" and "Tracers and weapon spin. Each one has its own switch." or "Display options. Only your own screen changes."))
+		or (name == "fx" and "Tracers and weapon spin. Each one has its own switch." or (name == "world" and "Pick a look for the lobby and maps. Only your own screen changes." or "Display options. Only your own screen changes.")))
 end
 tabSkins.MouseButton1Click:Connect(function() setPage("skins") end)
 tabFx.MouseButton1Click:Connect(function() setPage("fx") end)
 tabDisp.MouseButton1Click:Connect(function() setPage("display") end)
+tabWorld.MouseButton1Click:Connect(function() setPage("world") end)
 resetFx.MouseButton1Click:Connect(function()
 	defaults(); for _, f in ipairs(repaints) do f() end; save()
 	setStatus("Effects are back to their defaults.", "good")
@@ -1143,7 +1246,7 @@ local help = make("Frame", {
 corner(help, 14)
 stroke(help, 0.2, C.accent, 1.5)
 local helpText = text(help,
-	"How it works\n\n1.  Pick a weapon on the left.\n2.  Click a skin on the right. Click it again to turn it off.\n3.  If you are holding that weapon it updates by itself (the script quickly switches away and back). If not, it shows the next time you equip it.\n4.  Patterned skins get a Pattern and Wear box. Type a number and press Enter, or hit Random.\n5.  \"Hide arms\" (top right) makes your arms invisible so nothing covers the skin.\n6.  The Effects tab has bullet tracers (color, thickness, lifetime, glow) and a weapon spin (speed, direction, axis, behavior). The Display tab has stretched resolution, a draggable overlay with keystrokes, FPS and ping, and a highlight for your own character.\n\nA skin only shows on a weapon that is in your loadout. Only you see these changes. \"Free cursor\" (top right, or RightCtrl) keeps the mouse unlocked in first person so you never need Esc.\n\nRightShift hides or shows this window. There is no on-screen tab while it is hidden.",
+	"How it works\n\n1.  Pick a weapon on the left.\n2.  Click a skin on the right. Click it again to turn it off.\n3.  If you are holding that weapon it updates by itself (the script quickly switches away and back). If not, it shows the next time you equip it.\n4.  Patterned skins get a Pattern and Wear box. Type a number and press Enter, or hit Random.\n5.  \"Hide arms\" (top right) makes your arms invisible so nothing covers the skin.\n6.  The Effects tab has bullet tracers (color, thickness, lifetime, glow) and a weapon spin (speed, direction, axis, behavior). The Display tab has stretched resolution, a draggable overlay with keystrokes, FPS and ping, and a highlight for your own character. The World tab changes how the lobby and maps look on your screen (color looks, glow, sun rays).\n\nA skin only shows on a weapon that is in your loadout. Only you see these changes. \"Free cursor\" (top right, or RightCtrl) keeps the mouse unlocked in first person so you never need Esc.\n\nRightShift hides or shows this window. There is no on-screen tab while it is hidden.",
 	13, C.text, UDim2.fromOffset(20, 16), UDim2.new(1, -40, 1, -70))
 helpText.ZIndex = 21
 helpText.TextYAlignment = Enum.TextYAlignment.Top
@@ -1179,6 +1282,7 @@ local function unload()
 	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerFx") end)
 	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerSelf") end)
 	pcall(function() if shHl then shHl:Destroy() end end)
+	for _, i in ipairs({ wGrade, wBloom, wRays }) do pcall(function() i:Destroy() end) end
 	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerStretchB") end)
 	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerStretchA") end)
 	st.on = false; pcall(unstretch)
@@ -1202,6 +1306,6 @@ _G.PistolDuelsSkinChanger = {
 	unload = unload, sel = sel, pat = pat, wear = wear, hits = function() return hits end, reEquip = reEquip,
 	setHideArms = setHideArms, hideArms = function() return hideArms end,
 	setFreeCursor = setFreeCursor, freeCursor = function() return freeCursor end,
-	tr = tr, spin = spin, st = st, hud = hud, sh = sh, tracer = spawnTracer,
+	tr = tr, spin = spin, st = st, hud = hud, sh = sh, wd = wd, applyWorld = applyWorld, tracer = spawnTracer,
 }
 print(("[SkinChanger] ready: %d weapons, %d skins"):format(#weapons, (function() local n = 0 for _, l in pairs(skinsOf) do n += #l end return n end)()))
