@@ -1,4 +1,4 @@
--- PISTOL DUELS | Skin Changer (local only)
+-- PISTOL DUELS | Skin Changer (local only)  |  made by meowthjr & Claude
 --
 -- WHAT IT DOES
 --   Pick any Glock, Tec-9, Deagle or Knife skin and your own gun shows it, even skins you don't own.
@@ -274,6 +274,15 @@ local function restoreArms()
 end
 pcall(function() RunService:BindToRenderStep("PDSkinChangerArms", Enum.RenderPriority.Last.Value, enforceArms) end)
 
+-- ===================== free cursor =====================
+local freeCursor = false
+local function enforceCursor()
+	if not freeCursor then return end
+	UIS.MouseBehavior = Enum.MouseBehavior.Default
+	UIS.MouseIconEnabled = true
+end
+pcall(function() RunService:BindToRenderStep("PDSkinChangerCursor", Enum.RenderPriority.Last.Value + 1, enforceCursor) end)
+
 -- ===================== window =====================
 local C = {
 	bg = Color3.fromRGB(13, 14, 19), white = Color3.fromRGB(255, 255, 255), accent = Color3.fromRGB(94, 138, 255),
@@ -345,56 +354,68 @@ local win = make("Frame", {
 corner(win, 14)
 stroke(win, 0.86)
 
--- a small pill to bring the window back after hiding it
-local pill = button(gui, "Skin Changer", UDim2.new(0.5, -55, 0, 8), UDim2.fromOffset(110, 28))
-pill.BackgroundColor3 = C.bg; pill.BackgroundTransparency = 0.25
-pill.Visible = false
-local function setOpen(open) win.Visible = open; pill.Visible = not open end
-pill.MouseButton1Click:Connect(function() setOpen(true) end)
+-- no on-screen tab when hidden (so nobody can see you use it): RightShift brings the window back
+local function setOpen(open) win.Visible = open end
 
 -- header: title on the left, arms switch + small buttons on the right
 local top = make("Frame", { Size = UDim2.new(1, 0, 0, 52), BackgroundTransparency = 1 }, win)
 text(top, "Skin Changer", 17, C.text, UDim2.fromOffset(18, 8), UDim2.fromOffset(200, 22), nil, Enum.Font.GothamBold)
-text(top, "Pistol Duels  ·  only you see it", 11, C.dim, UDim2.fromOffset(18, 29), UDim2.fromOffset(220, 16))
+text(top, "made by meowthjr & Claude", 11, C.dim, UDim2.fromOffset(18, 29), UDim2.fromOffset(220, 16))
 local closeBtn = button(top, "×", UDim2.new(1, -44, 0, 12), UDim2.fromOffset(30, 28))
 local hideBtn = button(top, "–", UDim2.new(1, -78, 0, 12), UDim2.fromOffset(30, 28))
 local helpBtn = button(top, "?", UDim2.new(1, -112, 0, 12), UDim2.fromOffset(30, 28))
 closeBtn.TextSize = 18
 
--- switch: Hide arms
+-- small on/off switches in the header
 local setStatus
-local armsLabel = text(top, "Hide arms", 12, C.dim, UDim2.new(1, -226, 0, 0), UDim2.fromOffset(62, 52), Enum.TextXAlignment.Right)
-local sw = make("TextButton", {
-	Text = "", AutoButtonColor = false, Position = UDim2.new(1, -158, 0, 16), Size = UDim2.fromOffset(38, 20),
-	BackgroundColor3 = C.white, BackgroundTransparency = 0.82,
-}, top)
-corner(sw, 10)
-local knob = make("Frame", { Size = UDim2.fromOffset(16, 16), Position = UDim2.fromOffset(2, 2), BackgroundColor3 = C.text, BorderSizePixel = 0 }, sw)
-corner(knob, 8)
-local function paintSwitch(animate)
-	local goal = {
-		BackgroundColor3 = hideArms and C.accent or C.white,
-		BackgroundTransparency = hideArms and 0.1 or 0.82,
-	}
-	local kgoal = { Position = hideArms and UDim2.fromOffset(20, 2) or UDim2.fromOffset(2, 2) }
-	if animate then
-		TweenService:Create(sw, TweenInfo.new(0.15), goal):Play()
-		TweenService:Create(knob, TweenInfo.new(0.15), kgoal):Play()
-	else
-		for k, v in pairs(goal) do sw[k] = v end
-		knob.Position = kgoal.Position
+local function makeSwitch(label, labelX, switchX, labelW, get)
+	text(top, label, 12, C.dim, UDim2.new(1, labelX, 0, 0), UDim2.fromOffset(labelW, 52), Enum.TextXAlignment.Right)
+	local sw = make("TextButton", {
+		Text = "", AutoButtonColor = false, Position = UDim2.new(1, switchX, 0, 16), Size = UDim2.fromOffset(38, 20),
+		BackgroundColor3 = C.white, BackgroundTransparency = 0.82,
+	}, top)
+	corner(sw, 10)
+	local knob = make("Frame", { Size = UDim2.fromOffset(16, 16), Position = UDim2.fromOffset(2, 2), BackgroundColor3 = C.text, BorderSizePixel = 0 }, sw)
+	corner(knob, 8)
+	local function paint(animate)
+		local on = get()
+		local goal = { BackgroundColor3 = on and C.accent or C.white, BackgroundTransparency = on and 0.1 or 0.82 }
+		local kpos = on and UDim2.fromOffset(20, 2) or UDim2.fromOffset(2, 2)
+		if animate then
+			TweenService:Create(sw, TweenInfo.new(0.15), goal):Play()
+			TweenService:Create(knob, TweenInfo.new(0.15), { Position = kpos }):Play()
+		else
+			for k, v in pairs(goal) do sw[k] = v end
+			knob.Position = kpos
+		end
 	end
+	paint(false)
+	return sw, paint
 end
+
+-- Hide arms
+local armsSw, paintArms = makeSwitch("Hide arms", -226, -158, 62, function() return hideArms end)
 local function setHideArms(on)
 	hideArms = on and true or false
-	paintSwitch(true); save()
+	paintArms(true); save()
 	if hideArms then enforceArms() else restoreArms() end
 end
-sw.MouseButton1Click:Connect(function()
+armsSw.MouseButton1Click:Connect(function()
 	setHideArms(not hideArms)
 	setStatus(hideArms and "Arms hidden. They stay hidden when you switch weapons." or "Arms are back.", "good")
 end)
-paintSwitch(false)
+
+-- Free cursor: keeps your mouse unlocked in first person so you can click the window without pressing Esc
+local cursorSw, paintCursor = makeSwitch("Free cursor", -334, -266, 70, function() return freeCursor end)
+local function setFreeCursor(on)
+	freeCursor = on and true or false
+	paintCursor(true)
+	if freeCursor then enforceCursor() end
+end
+cursorSw.MouseButton1Click:Connect(function()
+	setFreeCursor(not freeCursor)
+	setStatus(freeCursor and "Cursor unlocked. Move the mouse freely. (RightCtrl turns it off again.)" or "Cursor is locked to the camera again.", "good")
+end)
 make("Frame", { Position = UDim2.new(0, 14, 1, -1), Size = UDim2.new(1, -28, 0, 1), BackgroundColor3 = C.white, BackgroundTransparency = 0.9, BorderSizePixel = 0 }, top)
 
 -- dragging by the header
@@ -618,13 +639,13 @@ end)
 
 -- help card (shown the first time, and with the ? button)
 local help = make("Frame", {
-	Size = UDim2.fromOffset(450, 300), Position = UDim2.new(0.5, -225, 0.5, -150), BackgroundColor3 = C.bg,
+	Size = UDim2.fromOffset(470, 350), Position = UDim2.new(0.5, -235, 0.5, -175), BackgroundColor3 = C.bg,
 	BackgroundTransparency = 0.04, BorderSizePixel = 0, Visible = false, ZIndex = 20,
 }, win)
 corner(help, 14)
 stroke(help, 0.2, C.accent, 1.5)
 local helpText = text(help,
-	"How it works\n\n1.  Pick a weapon on the left.\n2.  Click a skin on the right. Click it again to turn it off.\n3.  If you are holding that weapon it updates by itself (the script quickly switches away and back). If not, it shows the next time you equip it.\n4.  Patterned skins get a Pattern and Wear box. Type a number and press Enter, or hit Random.\n5.  \"Hide arms\" (top right) makes your arms invisible so nothing covers the skin.\n\nA skin only shows on a weapon that is in your loadout. Only you see these changes. RightShift hides or shows this window.",
+	"How it works\n\n1.  Pick a weapon on the left.\n2.  Click a skin on the right. Click it again to turn it off.\n3.  If you are holding that weapon it updates by itself (the script quickly switches away and back). If not, it shows the next time you equip it.\n4.  Patterned skins get a Pattern and Wear box. Type a number and press Enter, or hit Random.\n5.  \"Hide arms\" (top right) makes your arms invisible so nothing covers the skin.\n\nA skin only shows on a weapon that is in your loadout. Only you see these changes. \"Free cursor\" (top right, or RightCtrl) keeps the mouse unlocked in first person so you never need Esc.\n\nRightShift hides or shows this window. There is no on-screen tab while it is hidden.",
 	13, C.text, UDim2.fromOffset(20, 16), UDim2.new(1, -40, 1, -70))
 helpText.ZIndex = 21
 helpText.TextYAlignment = Enum.TextYAlignment.Top
@@ -636,7 +657,9 @@ gotIt.MouseButton1Click:Connect(function() showHelp(false); seenHelp = true; sav
 
 hideBtn.MouseButton1Click:Connect(function() setOpen(false) end)
 keep(UIS.InputBegan:Connect(function(i, gp)
-	if not gp and i.KeyCode == Enum.KeyCode.RightShift then setOpen(not win.Visible) end
+	if gp then return end
+	if i.KeyCode == Enum.KeyCode.RightShift then setOpen(not win.Visible)
+	elseif i.KeyCode == Enum.KeyCode.RightControl then setFreeCursor(not freeCursor) end
 end))
 
 do
@@ -654,6 +677,8 @@ local function unload()
 	if not alive then return end
 	alive = false
 	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerArms") end)
+	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerCursor") end)
+	freeCursor = false
 	restoreArms()
 	g(function()
 		if WM.createAnimated == wrapCA then WM.createAnimated = origCreateAnimated end
@@ -669,5 +694,6 @@ closeBtn.MouseButton1Click:Connect(unload)
 _G.PistolDuelsSkinChanger = {
 	unload = unload, sel = sel, pat = pat, wear = wear, hits = function() return hits end, reEquip = reEquip,
 	setHideArms = setHideArms, hideArms = function() return hideArms end,
+	setFreeCursor = setFreeCursor, freeCursor = function() return freeCursor end,
 }
 print(("[SkinChanger] ready: %d weapons, %d skins"):format(#weapons, (function() local n = 0 for _, l in pairs(skinsOf) do n += #l end return n end)()))
