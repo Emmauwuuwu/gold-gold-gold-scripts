@@ -80,6 +80,7 @@ local hideArms = false
 -- effect settings (the Effects tab): bullet tracers on your own shots, and a spin on your own weapon model
 local tr = { on = false, color = "Cyan", thick = 0.12, life = 0.6, glow = true, streak = false, replace = true }
 local spin = { on = false, speed = 180, dir = 1, axis = "Y", mode = "Continuous" }
+local st = { on = false, amount = 0.25 }   -- stretched resolution (Display tab)
 local function mergeInto(dst, src)
 	if type(src) ~= "table" then return end
 	for k, v in pairs(dst) do if type(src[k]) == type(v) then dst[k] = src[k] end end
@@ -93,14 +94,14 @@ pcall(function()
 			for k, v in pairs(type(d.wear) == "table" and d.wear or {}) do if type(v) == "number" then wear[k] = v end end
 			seenHelp = d.seenHelp == true
 			hideArms = d.hideArms == true
-			mergeInto(tr, d.tr); mergeInto(spin, d.spin)
+			mergeInto(tr, d.tr); mergeInto(spin, d.spin); mergeInto(st, d.st)
 		end
 	end
 end)
 local function save()
 	pcall(function()
 		if type(writefile) == "function" then
-			writefile(SAVE_FILE, HttpService:JSONEncode({ sel = sel, pat = pat, wear = wear, seenHelp = seenHelp, hideArms = hideArms, tr = tr, spin = spin }))
+			writefile(SAVE_FILE, HttpService:JSONEncode({ sel = sel, pat = pat, wear = wear, seenHelp = seenHelp, hideArms = hideArms, tr = tr, spin = spin, st = st }))
 		end
 	end)
 end
@@ -440,6 +441,25 @@ end
 local function stepFx() guarded("tracers", stepTracers); guarded("spin", stepSpin) end
 do local okB, eB = pcall(function() RunService:BindToRenderStep("PDSkinChangerFx", Enum.RenderPriority.Last.Value + 2, stepFx) end); if not okB then warn("[SkinChanger] could not start PDSkinChangerFx: " .. tostring(eB)) end end
 
+-- ===================== stretched resolution =====================
+-- Squeezes your camera sideways so everything looks wider, like a stretched resolution. Only your own screen changes.
+-- The stretch is taken off again right before the game's camera code runs each frame, so the game never sees it.
+local stretchedCF, cleanCF = nil, nil
+local function unstretch()
+	local cam = workspace.CurrentCamera
+	if stretchedCF and cam and cam.CFrame == stretchedCF then cam.CFrame = cleanCF end
+	stretchedCF, cleanCF = nil, nil
+end
+local function applyStretch()
+	local cam = workspace.CurrentCamera
+	if not (cam and st.on) then return end
+	cleanCF = cam.CFrame
+	stretchedCF = cleanCF * CFrame.new(0, 0, 0, 1 - math.clamp(st.amount, 0, 0.7), 0, 0, 0, 1, 0, 0, 0, 1)
+	cam.CFrame = stretchedCF
+end
+do local okB, eB = pcall(function() RunService:BindToRenderStep("PDSkinChangerStretchA", 1, unstretch) end); if not okB then warn("[SkinChanger] could not start stretch: " .. tostring(eB)) end end
+do local okB, eB = pcall(function() RunService:BindToRenderStep("PDSkinChangerStretchB", Enum.RenderPriority.Last.Value + 3, function() guarded("stretch", applyStretch) end) end); if not okB then warn("[SkinChanger] could not start stretch: " .. tostring(eB)) end end
+
 -- ===================== window =====================
 local C = {
 	bg = Color3.fromRGB(13, 14, 19), white = Color3.fromRGB(255, 255, 255), accent = Color3.fromRGB(94, 138, 255),
@@ -606,6 +626,7 @@ end
 -- page tabs: Skins / Effects
 local tabSkins = button(win, "Skins", UDim2.fromOffset(14, 58), UDim2.fromOffset(92, 28))
 local tabFx = button(win, "Effects", UDim2.fromOffset(112, 58), UDim2.fromOffset(92, 28))
+local tabDisp = button(win, "Display", UDim2.fromOffset(210, 58), UDim2.fromOffset(92, 28))
 
 -- two glass panels: weapons (left) and skins (right)
 local function column(title)
@@ -929,23 +950,36 @@ segmented(spCard, 146, "Axis", { { id = "X", text = "X  tilt" }, { id = "Y", tex
 segmented(spCard, 200, "Behavior", { { id = "Continuous", text = "Continuous" }, { id = "Swing", text = "Swing" }, { id = "On equip", text = "On equip" } }, function() return spin.mode end, function(v) spin.mode = v end)
 text(spCard, "Only the weapon in your view turns. Nothing else about the game changes.", 11, C.dim, UDim2.fromOffset(14, 254), UDim2.new(1, -28, 0, 30))
 
+-- Display page: stretched resolution
+local dispPage = make("Frame", { Position = UDim2.fromOffset(14, 96), Size = UDim2.new(1, -28, 1, -156), BackgroundTransparency = 1, Visible = false }, win)
+local stCard = make("Frame", { Size = UDim2.new(0.5, -6, 1, 0), BackgroundColor3 = C.white, BackgroundTransparency = 0.95, BorderSizePixel = 0 }, dispPage)
+corner(stCard, 12); stroke(stCard, 0.93)
+text(stCard, "Stretched resolution", 14, C.text, UDim2.fromOffset(14, 10), UDim2.new(1, -90, 0, 20), nil, Enum.Font.GothamBold)
+toggleAt(stCard, UDim2.new(1, -52, 0, 12), function() return st.on end, function(v) st.on = v end)
+slider(stCard, 48, "Stretch", 0, 0.6, 0.01, function() return st.amount end, function(v) st.amount = v end, function(v) return math.floor(v * 100 + 0.5) .. " %" end)
+text(stCard, "Makes everything look wider by squeezing your view sideways, like a stretched monitor setting. Only your own screen changes; other players and the game are not affected. Your weapon and arms stretch with the view.", 12, C.dim, UDim2.fromOffset(14, 100), UDim2.new(1, -28, 0, 110))
+
 local function defaults()
 	tr.on, tr.color, tr.thick, tr.life, tr.glow, tr.streak, tr.replace = false, "Cyan", 0.12, 0.6, true, false, true
 	spin.on, spin.speed, spin.dir, spin.axis, spin.mode = false, 180, 1, "Y", "Continuous"
+	st.on, st.amount = false, 0.25
 end
 
 local page = "skins"
+local function paintTab(b, on) b.BackgroundColor3 = on and C.accent or C.white; b.BackgroundTransparency = on and 0.2 or 0.92 end
 local function setPage(name)
 	page = name
 	local skinsPage = (name == "skins")
-	left.frame.Visible = skinsPage; right.frame.Visible = skinsPage; fxPage.Visible = not skinsPage
+	left.frame.Visible = skinsPage; right.frame.Visible = skinsPage
+	fxPage.Visible = (name == "fx"); dispPage.Visible = (name == "display")
 	reBtn.Visible = skinsPage; resetOne.Visible = skinsPage; resetAll.Visible = skinsPage; resetFx.Visible = not skinsPage
-	tabSkins.BackgroundColor3 = skinsPage and C.accent or C.white; tabSkins.BackgroundTransparency = skinsPage and 0.2 or 0.92
-	tabFx.BackgroundColor3 = skinsPage and C.white or C.accent; tabFx.BackgroundTransparency = skinsPage and 0.92 or 0.2
-	setStatus(skinsPage and "Pick a weapon, click a skin. Only you see the change." or "Tracers and weapon spin. Each one has its own switch.")
+	paintTab(tabSkins, skinsPage); paintTab(tabFx, name == "fx"); paintTab(tabDisp, name == "display")
+	setStatus(skinsPage and "Pick a weapon, click a skin. Only you see the change."
+		or (name == "fx" and "Tracers and weapon spin. Each one has its own switch." or "Display options. Only your own screen changes."))
 end
 tabSkins.MouseButton1Click:Connect(function() setPage("skins") end)
 tabFx.MouseButton1Click:Connect(function() setPage("fx") end)
+tabDisp.MouseButton1Click:Connect(function() setPage("display") end)
 resetFx.MouseButton1Click:Connect(function()
 	defaults(); for _, f in ipairs(repaints) do f() end; save()
 	setStatus("Effects are back to their defaults.", "good")
@@ -959,7 +993,7 @@ local help = make("Frame", {
 corner(help, 14)
 stroke(help, 0.2, C.accent, 1.5)
 local helpText = text(help,
-	"How it works\n\n1.  Pick a weapon on the left.\n2.  Click a skin on the right. Click it again to turn it off.\n3.  If you are holding that weapon it updates by itself (the script quickly switches away and back). If not, it shows the next time you equip it.\n4.  Patterned skins get a Pattern and Wear box. Type a number and press Enter, or hit Random.\n5.  \"Hide arms\" (top right) makes your arms invisible so nothing covers the skin.\n6.  The Effects tab has bullet tracers (color, thickness, lifetime, glow) and a weapon spin (speed, direction, axis, behavior).\n\nA skin only shows on a weapon that is in your loadout. Only you see these changes. \"Free cursor\" (top right, or RightCtrl) keeps the mouse unlocked in first person so you never need Esc.\n\nRightShift hides or shows this window. There is no on-screen tab while it is hidden.",
+	"How it works\n\n1.  Pick a weapon on the left.\n2.  Click a skin on the right. Click it again to turn it off.\n3.  If you are holding that weapon it updates by itself (the script quickly switches away and back). If not, it shows the next time you equip it.\n4.  Patterned skins get a Pattern and Wear box. Type a number and press Enter, or hit Random.\n5.  \"Hide arms\" (top right) makes your arms invisible so nothing covers the skin.\n6.  The Effects tab has bullet tracers (color, thickness, lifetime, glow) and a weapon spin (speed, direction, axis, behavior). The Display tab has stretched resolution.\n\nA skin only shows on a weapon that is in your loadout. Only you see these changes. \"Free cursor\" (top right, or RightCtrl) keeps the mouse unlocked in first person so you never need Esc.\n\nRightShift hides or shows this window. There is no on-screen tab while it is hidden.",
 	13, C.text, UDim2.fromOffset(20, 16), UDim2.new(1, -40, 1, -70))
 helpText.ZIndex = 21
 helpText.TextYAlignment = Enum.TextYAlignment.Top
@@ -993,6 +1027,9 @@ local function unload()
 	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerArms") end)
 	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerCursor") end)
 	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerFx") end)
+	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerStretchB") end)
+	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerStretchA") end)
+	st.on = false; pcall(unstretch)
 	for _, t in ipairs(active) do pcall(function() t.core:Destroy(); t.glow:Destroy(); t.a0:Destroy(); t.a1:Destroy() end) end
 	for _, t in ipairs(pool) do pcall(function() t.core:Destroy(); t.glow:Destroy(); t.a0:Destroy(); t.a1:Destroy() end) end
 	freeCursor = false
@@ -1013,6 +1050,6 @@ _G.PistolDuelsSkinChanger = {
 	unload = unload, sel = sel, pat = pat, wear = wear, hits = function() return hits end, reEquip = reEquip,
 	setHideArms = setHideArms, hideArms = function() return hideArms end,
 	setFreeCursor = setFreeCursor, freeCursor = function() return freeCursor end,
-	tr = tr, spin = spin, tracer = spawnTracer,
+	tr = tr, spin = spin, st = st, tracer = spawnTracer,
 }
 print(("[SkinChanger] ready: %d weapons, %d skins"):format(#weapons, (function() local n = 0 for _, l in pairs(skinsOf) do n += #l end return n end)()))
