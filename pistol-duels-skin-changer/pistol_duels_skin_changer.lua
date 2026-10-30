@@ -80,7 +80,7 @@ local hideArms = false
 -- effect settings (the Effects tab): bullet tracers on your own shots, and a spin on your own weapon model
 local tr = { on = false, color = "Cyan", thick = 0.12, life = 0.6, glow = true, streak = false, replace = true }
 local spin = { on = false, speed = 180, dir = 1, axis = "Y", mode = "Continuous" }
-local st = { on = false, amount = 0.25 }   -- stretched resolution (Display tab)
+local st = { on = false, amount = 0.35 }   -- stretched resolution (Display tab)
 local function mergeInto(dst, src)
 	if type(src) ~= "table" then return end
 	for k, v in pairs(dst) do if type(src[k]) == type(v) then dst[k] = src[k] end end
@@ -442,7 +442,7 @@ local function stepFx() guarded("tracers", stepTracers); guarded("spin", stepSpi
 do local okB, eB = pcall(function() RunService:BindToRenderStep("PDSkinChangerFx", Enum.RenderPriority.Last.Value + 2, stepFx) end); if not okB then warn("[SkinChanger] could not start PDSkinChangerFx: " .. tostring(eB)) end end
 
 -- ===================== stretched resolution =====================
--- Stretches your camera sideways so everything looks wider, like a stretched resolution. Only your own screen changes.
+-- Flattens your camera vertically (the usual stretched-res trick) so everything looks wider, like a stretched resolution. Only your own screen changes.
 -- The stretch is taken off again right before the game's camera code runs each frame, so the game never sees it.
 local stretchedCF, cleanCF = nil, nil
 local function unstretch()
@@ -454,7 +454,7 @@ local function applyStretch()
 	local cam = workspace.CurrentCamera
 	if not (cam and st.on) then return end
 	cleanCF = cam.CFrame
-	stretchedCF = cleanCF * CFrame.new(0, 0, 0, 1 + math.clamp(st.amount, 0, 0.7), 0, 0, 0, 1, 0, 0, 0, 1)
+	stretchedCF = cleanCF * CFrame.new(0, 0, 0, 1, 0, 0, 0, 1 - math.clamp(st.amount, 0, 0.7), 0, 0, 0, 1)
 	cam.CFrame = stretchedCF
 end
 do local okB, eB = pcall(function() RunService:BindToRenderStep("PDSkinChangerStretchA", 1, unstretch) end); if not okB then warn("[SkinChanger] could not start stretch: " .. tostring(eB)) end end
@@ -956,13 +956,13 @@ local stCard = make("Frame", { Size = UDim2.new(0.5, -6, 1, 0), BackgroundColor3
 corner(stCard, 12); stroke(stCard, 0.93)
 text(stCard, "Stretched resolution", 14, C.text, UDim2.fromOffset(14, 10), UDim2.new(1, -90, 0, 20), nil, Enum.Font.GothamBold)
 toggleAt(stCard, UDim2.new(1, -52, 0, 12), function() return st.on end, function(v) st.on = v end)
-slider(stCard, 48, "Stretch", 0, 0.6, 0.01, function() return st.amount end, function(v) st.amount = v end, function(v) return math.floor(v * 100 + 0.5) .. " %" end)
-text(stCard, "Makes everything look wider by squeezing your view sideways, like a stretched monitor setting. Only your own screen changes; other players and the game are not affected. Your weapon and arms stretch with the view.", 12, C.dim, UDim2.fromOffset(14, 100), UDim2.new(1, -28, 0, 110))
+slider(stCard, 48, "Stretch", 0, 0.7, 0.01, function() return st.amount end, function(v) st.amount = v end, function(v) return math.floor(v * 100 + 0.5) .. " %" end)
+text(stCard, "Makes everything look wider by flattening your view vertically, like a stretched monitor setting. Only your own screen changes; other players and the game are not affected. Your weapon and arms stretch with the view.", 12, C.dim, UDim2.fromOffset(14, 100), UDim2.new(1, -28, 0, 110))
 
 local function defaults()
 	tr.on, tr.color, tr.thick, tr.life, tr.glow, tr.streak, tr.replace = false, "Cyan", 0.12, 0.6, true, false, true
 	spin.on, spin.speed, spin.dir, spin.axis, spin.mode = false, 180, 1, "Y", "Continuous"
-	st.on, st.amount = false, 0.25
+	st.on, st.amount = false, 0.35
 end
 
 local page = "skins"
