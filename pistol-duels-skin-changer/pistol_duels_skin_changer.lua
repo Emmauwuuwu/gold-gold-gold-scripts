@@ -10,6 +10,8 @@
 --   2. Pick a weapon on the left, then click a skin on the right (click it again to turn it off).
 --   3. If you are holding that weapon it updates by itself. Otherwise it shows the next time you equip it.
 --   4. Patterned skins (the ones with a Pattern box) also let you choose the pattern number and wear.
+--   5. Effects tab: bullet tracers on your own shots (color, thickness, lifetime, glow, streak) and a spin on your own
+--      weapon model (speed, direction, axis, behavior). Header: Hide arms, Free cursor (RightCtrl).
 --   Your choices are saved and come back the next time you run the script.
 --   Note: a skin only shows up on a weapon that is in your loadout (the pistol slot or the knife slot).
 
@@ -47,7 +49,7 @@ local function g(fn, ...)
 	return table.unpack(res, 1, res.n)
 end
 
-local SkinCatalog, WM, FC
+local SkinCatalog, WM, FC, CE
 g(function()
 	local cos = RS:FindFirstChild("Cosmetics")
 	if not cos then return end
@@ -55,6 +57,9 @@ g(function()
 	WM = require(cos.WeaponModel)
 	pcall(function()
 		FC = require(lp.PlayerScripts.Client.Cosmetics.FinishClient)
+	end)
+	pcall(function()
+		CE = require(lp.PlayerScripts.Client.Effects.CosmeticEffects)
 	end)
 end)
 if not (SkinCatalog and WM) then
@@ -72,6 +77,13 @@ end
 local sel, pat, wear = {}, {}, {}   -- weapon -> skin id / pattern number / wear
 local seenHelp = false
 local hideArms = false
+-- effect settings (the Effects tab): bullet tracers on your own shots, and a spin on your own weapon model
+local tr = { on = false, color = "Cyan", thick = 0.12, life = 0.6, glow = true, streak = false, replace = true }
+local spin = { on = false, speed = 180, dir = 1, axis = "Y", mode = "Continuous" }
+local function mergeInto(dst, src)
+	if type(src) ~= "table" then return end
+	for k, v in pairs(dst) do if type(src[k]) == type(v) then dst[k] = src[k] end end
+end
 pcall(function()
 	if type(readfile) == "function" and type(isfile) == "function" and isfile(SAVE_FILE) then
 		local d = HttpService:JSONDecode(readfile(SAVE_FILE))
@@ -81,13 +93,14 @@ pcall(function()
 			for k, v in pairs(type(d.wear) == "table" and d.wear or {}) do if type(v) == "number" then wear[k] = v end end
 			seenHelp = d.seenHelp == true
 			hideArms = d.hideArms == true
+			mergeInto(tr, d.tr); mergeInto(spin, d.spin)
 		end
 	end
 end)
 local function save()
 	pcall(function()
 		if type(writefile) == "function" then
-			writefile(SAVE_FILE, HttpService:JSONEncode({ sel = sel, pat = pat, wear = wear, seenHelp = seenHelp, hideArms = hideArms }))
+			writefile(SAVE_FILE, HttpService:JSONEncode({ sel = sel, pat = pat, wear = wear, seenHelp = seenHelp, hideArms = hideArms, tr = tr, spin = spin }))
 		end
 	end)
 end
@@ -172,13 +185,17 @@ end)
 local function heldModel()
 	local cam = workspace.CurrentCamera
 	if not cam then return nil end
+	local fallback, fallbackW
 	for _, c in ipairs(cam:GetChildren()) do
 		if c:IsA("Model") then
 			local w = string.match(c.Name, "^PD_(.+)$")
-			if w then return c, w end
+			if w then
+				if c:GetAttribute("PDSkinId") ~= nil then return c, w end   -- the real viewmodel carries its skin id
+				fallback, fallbackW = fallback or c, fallbackW or w
+			end
 		end
 	end
-	return nil
+	return fallback, fallbackW
 end
 local reEquipping = false
 local function reEquip()
@@ -272,7 +289,7 @@ local function restoreArms()
 		end
 	end
 end
-pcall(function() RunService:BindToRenderStep("PDSkinChangerArms", Enum.RenderPriority.Last.Value, enforceArms) end)
+do local okB, eB = pcall(function() RunService:BindToRenderStep("PDSkinChangerArms", Enum.RenderPriority.Last.Value, enforceArms) end); if not okB then warn("[SkinChanger] could not start PDSkinChangerArms: " .. tostring(eB)) end end
 
 -- ===================== free cursor =====================
 local freeCursor = false
@@ -281,7 +298,147 @@ local function enforceCursor()
 	UIS.MouseBehavior = Enum.MouseBehavior.Default
 	UIS.MouseIconEnabled = true
 end
-pcall(function() RunService:BindToRenderStep("PDSkinChangerCursor", Enum.RenderPriority.Last.Value + 1, enforceCursor) end)
+do local okB, eB = pcall(function() RunService:BindToRenderStep("PDSkinChangerCursor", Enum.RenderPriority.Last.Value + 1, enforceCursor) end); if not okB then warn("[SkinChanger] could not start PDSkinChangerCursor: " .. tostring(eB)) end end
+
+
+-- ===================== tracers =====================
+-- Draws a glowing beam from your gun to where each of YOUR shots lands. Other players' shots are never touched.
+local TRACER_COLORS = {
+	Cyan = Color3.fromRGB(80, 220, 255), Pink = Color3.fromRGB(255, 105, 200), Gold = Color3.fromRGB(255, 205, 80),
+	Green = Color3.fromRGB(100, 255, 140), Red = Color3.fromRGB(255, 80, 80), White = Color3.fromRGB(255, 255, 255),
+	Purple = Color3.fromRGB(170, 110, 255),
+}
+local COLOR_ORDER = { "Cyan", "Pink", "Gold", "Green", "Red", "White", "Purple", "Rainbow" }
+local terrain = workspace.Terrain
+local pool, active = {}, {}
+local MAX_TRACERS = 30
+local function newTracer()
+	local a0, a1 = Instance.new("Attachment"), Instance.new("Attachment")
+	a0.Parent = terrain; a1.Parent = terrain
+	local function beam()
+		local b = Instance.new("Beam")
+		b.Attachment0 = a0; b.Attachment1 = a1; b.FaceCamera = true; b.LightEmission = 1; b.LightInfluence = 0
+		b.Segments = 1; b.Enabled = false; b.Parent = terrain
+		return b
+	end
+	return { a0 = a0, a1 = a1, core = beam(), glow = beam() }
+end
+local function recycle(t)
+	t.core.Enabled = false; t.glow.Enabled = false
+	pool[#pool + 1] = t
+end
+local function spawnTracer(from, to)
+	if #active >= MAX_TRACERS then recycle(table.remove(active, 1)) end
+	local t = table.remove(pool) or newTracer()
+	local col = tr.color == "Rainbow" and Color3.fromHSV((os.clock() * 0.7) % 1, 0.85, 1) or TRACER_COLORS[tr.color] or TRACER_COLORS.Cyan
+	t.from, t.to, t.born, t.life, t.streak, t.thick = from, to, os.clock(), math.max(tr.life, 0.05), tr.streak, tr.thick
+	t.core.Color = ColorSequence.new(col); t.glow.Color = ColorSequence.new(col)
+	t.core.Transparency = NumberSequence.new(0); t.glow.Transparency = NumberSequence.new(0.55)
+	t.core.Width0, t.core.Width1 = tr.thick, tr.thick
+	t.glow.Width0, t.glow.Width1 = tr.thick * 3.2, tr.thick * 3.2
+	t.a0.WorldPosition = from; t.a1.WorldPosition = to
+	t.core.Enabled = true; t.glow.Enabled = tr.glow
+	active[#active + 1] = t
+end
+local function stepTracers()
+	local now = os.clock()
+	for i = #active, 1, -1 do
+		local t = active[i]
+		local p = (now - t.born) / t.life
+		if p >= 1 then
+			recycle(t); table.remove(active, i)
+		else
+			local tp
+			if t.streak then
+				local dir = t.to - t.from
+				local head = math.clamp(p / 0.45, 0, 1)
+				local tail = math.clamp(head - 0.22, 0, 1) + (p > 0.45 and (p - 0.45) / 0.55 * 0.22 or 0)
+				t.a0.WorldPosition = t.from + dir * math.min(tail, 1)
+				t.a1.WorldPosition = t.from + dir * head
+				tp = math.max(0, (p - 0.7) / 0.3) ^ 2
+			else
+				tp = p ^ 1.6
+			end
+			local w = t.thick * (1 - 0.6 * p)
+			t.core.Width0, t.core.Width1 = w, w
+			t.glow.Width0, t.glow.Width1 = w * 3.2, w * 3.2
+			t.core.Transparency = NumberSequence.new(tp)
+			t.glow.Transparency = NumberSequence.new(0.55 + 0.45 * tp)
+		end
+	end
+end
+
+local origShot, wrapShot
+if CE and type(CE.shot) == "function" then
+	origShot = CE.shot
+	wrapShot = function(origin, endpoint, a3, a4, a5, muzzle, a7, ...)
+		local skip = false
+		if tr.on then
+			local ok, res = pcall(function()
+				local cam = workspace.CurrentCamera
+				if typeof(origin) == "Vector3" and typeof(endpoint) == "Vector3" and typeof(muzzle) == "Instance"
+					and cam and muzzle:IsDescendantOf(cam) then   -- only shots from YOUR viewmodel
+					local from = origin
+					if muzzle:IsA("Attachment") then from = muzzle.WorldPosition end
+					spawnTracer(from, endpoint)
+					return tr.replace
+				end
+				return false
+			end)
+			skip = ok and res == true
+		end
+		if skip then return end
+		return origShot(origin, endpoint, a3, a4, a5, muzzle, a7, ...)
+	end
+	g(function() CE.shot = wrapShot end)
+end
+
+-- ===================== weapon spin =====================
+-- Turns only the gun in YOUR view, after the game has placed it each frame. Nothing else is affected.
+local spinAngle, spinModel, spinEquip, spinLast = 0, nil, 0, os.clock()
+local AXES = { X = Vector3.xAxis, Y = Vector3.yAxis, Z = Vector3.zAxis }
+local function gunCenter(m)
+	local sum, n = Vector3.zero, 0
+	for _, d in ipairs(m:GetDescendants()) do
+		if d:IsA("BasePart") and d.Name ~= "HumanoidRootPart" and not isArmPart(d) and d.Transparency < 1 then
+			sum += d.Position; n += 1
+		end
+	end
+	return n > 0 and sum / n or m:GetPivot().Position
+end
+local function stepSpin()
+	local now = os.clock()
+	local dt = math.min(now - spinLast, 0.1)
+	spinLast = now
+	if not spin.on then return end
+	local cam = workspace.CurrentCamera
+	local m = heldModel()
+	if not (cam and m) then return end
+	if m ~= spinModel then spinModel = m; spinAngle = 0; spinEquip = now end
+	local ang
+	if spin.mode == "Swing" then
+		ang = 60 * math.sin(math.rad(spin.speed) * (now - spinEquip) * 0.5) * spin.dir
+	elseif spin.mode == "On equip" then
+		local dur = math.max(360 / math.max(spin.speed, 1), 0.25)
+		local p = math.clamp((now - spinEquip) / dur, 0, 1)
+		ang = 360 * (1 - (1 - p) ^ 3) * spin.dir
+	else
+		spinAngle = (spinAngle + spin.speed * spin.dir * dt) % 360
+		ang = spinAngle
+	end
+	if math.abs(ang) < 0.01 or math.abs(ang % 360) < 0.01 then return end
+	local center = gunCenter(m)
+	local camRot = cam.CFrame.Rotation
+	local worldRot = camRot * CFrame.fromAxisAngle(AXES[spin.axis] or Vector3.yAxis, math.rad(ang)) * camRot:Inverse()
+	m:PivotTo(CFrame.new(center) * worldRot * CFrame.new(-center) * m:GetPivot())
+end
+local fxWarned = {}
+local function guarded(name, fn)
+	local ok, e = pcall(fn)
+	if not ok and not fxWarned[name] then fxWarned[name] = true; warn("[SkinChanger] " .. name .. " error: " .. tostring(e)) end
+end
+local function stepFx() guarded("tracers", stepTracers); guarded("spin", stepSpin) end
+do local okB, eB = pcall(function() RunService:BindToRenderStep("PDSkinChangerFx", Enum.RenderPriority.Last.Value + 2, stepFx) end); if not okB then warn("[SkinChanger] could not start PDSkinChangerFx: " .. tostring(eB)) end end
 
 -- ===================== window =====================
 local C = {
@@ -346,7 +503,7 @@ local function inputBox(parent, pos, sz, placeholder)
 	return t
 end
 
-local W, H = 640, 460
+local W, H = 640, 500
 local win = make("Frame", {
 	Size = UDim2.fromOffset(W, H), Position = UDim2.new(0.5, -W / 2, 0.5, -H / 2), BackgroundColor3 = C.bg,
 	BackgroundTransparency = 0.2, BorderSizePixel = 0,
@@ -439,10 +596,16 @@ local status = text(bar, "", 12, C.dim, UDim2.fromOffset(2, 0), UDim2.new(1, -33
 local reBtn = button(bar, "Re-equip", UDim2.new(1, -326, 0, 4), UDim2.fromOffset(98, 30))
 local resetOne = button(bar, "Reset this one", UDim2.new(1, -222, 0, 4), UDim2.fromOffset(110, 30))
 local resetAll = button(bar, "Reset all", UDim2.new(1, -106, 0, 4), UDim2.fromOffset(106, 30))
+local resetFx = button(bar, "Reset effects", UDim2.new(1, -126, 0, 4), UDim2.fromOffset(126, 30))
+resetFx.Visible = false
 setStatus = function(t, kind)
 	status.Text = t
 	status.TextColor3 = (kind == "good" and C.good) or (kind == "warn" and C.warn) or C.dim
 end
+
+-- page tabs: Skins / Effects
+local tabSkins = button(win, "Skins", UDim2.fromOffset(14, 58), UDim2.fromOffset(92, 28))
+local tabFx = button(win, "Effects", UDim2.fromOffset(112, 58), UDim2.fromOffset(92, 28))
 
 -- two glass panels: weapons (left) and skins (right)
 local function column(title)
@@ -459,10 +622,10 @@ local function column(title)
 	return { frame = f, title = t, scroll = s }
 end
 local left = column("WEAPONS")
-left.frame.Position = UDim2.fromOffset(14, 60); left.frame.Size = UDim2.new(0, 158, 1, -120)
+left.frame.Position = UDim2.fromOffset(14, 96); left.frame.Size = UDim2.new(0, 158, 1, -156)
 left.scroll.Position = UDim2.fromOffset(6, 30); left.scroll.Size = UDim2.new(1, -12, 1, -36)
 local right = column("SKINS")
-right.frame.Position = UDim2.fromOffset(180, 60); right.frame.Size = UDim2.new(1, -194, 1, -120)
+right.frame.Position = UDim2.fromOffset(180, 96); right.frame.Size = UDim2.new(1, -194, 1, -156)
 local search = make("TextBox", {
 	Position = UDim2.fromOffset(10, 30), Size = UDim2.new(1, -20, 0, 28), BackgroundColor3 = C.white, BackgroundTransparency = 0.92,
 	TextColor3 = C.text, PlaceholderText = "Search skins or rarity...", PlaceholderColor3 = C.dim, Text = "", Font = Enum.Font.Gotham,
@@ -637,15 +800,166 @@ resetAll.MouseButton1Click:Connect(function()
 	else setStatus("Everything is back to normal.", "good") end
 end)
 
+
+-- ===================== Effects page =====================
+local fxPage = make("Frame", { Position = UDim2.fromOffset(14, 96), Size = UDim2.new(1, -28, 1, -156), BackgroundTransparency = 1, Visible = false }, win)
+local repaints = {}
+local function card(x, w, title)
+	local f = make("Frame", { Position = UDim2.new(x, x == 0 and 0 or 6, 0, 0), Size = UDim2.new(w, -6, 1, 0), BackgroundColor3 = C.white, BackgroundTransparency = 0.95, BorderSizePixel = 0 }, fxPage)
+	corner(f, 12); stroke(f, 0.93)
+	text(f, title, 14, C.text, UDim2.fromOffset(14, 10), UDim2.new(1, -90, 0, 20), nil, Enum.Font.GothamBold)
+	return f
+end
+local function toggleAt(parent, pos, get, set)
+	local sw = make("TextButton", {
+		Text = "", AutoButtonColor = false, Position = pos, Size = UDim2.fromOffset(38, 20), BackgroundColor3 = C.white, BackgroundTransparency = 0.82,
+	}, parent)
+	corner(sw, 10)
+	local knob = make("Frame", { Size = UDim2.fromOffset(16, 16), Position = UDim2.fromOffset(2, 2), BackgroundColor3 = C.text, BorderSizePixel = 0 }, sw)
+	corner(knob, 8)
+	local function paint(animate)
+		local on = get()
+		local goal = { BackgroundColor3 = on and C.accent or C.white, BackgroundTransparency = on and 0.1 or 0.82 }
+		local kpos = on and UDim2.fromOffset(20, 2) or UDim2.fromOffset(2, 2)
+		if animate then
+			TweenService:Create(sw, TweenInfo.new(0.15), goal):Play()
+			TweenService:Create(knob, TweenInfo.new(0.15), { Position = kpos }):Play()
+		else
+			for k, v in pairs(goal) do sw[k] = v end
+			knob.Position = kpos
+		end
+	end
+	paint(false)
+	sw.MouseButton1Click:Connect(function() set(not get()); paint(true); save() end)
+	repaints[#repaints + 1] = function() paint(false) end
+	return sw
+end
+local function toggleRow(parent, y, label, get, set)
+	text(parent, label, 13, C.text, UDim2.fromOffset(14, y), UDim2.new(1, -70, 0, 20))
+	toggleAt(parent, UDim2.new(1, -52, 0, y), get, set)
+end
+local function slider(parent, y, label, min, max, step, get, set, fmt)
+	text(parent, label, 12, C.dim, UDim2.fromOffset(14, y), UDim2.new(1, -100, 0, 16))
+	local val = text(parent, "", 12, C.text, UDim2.new(1, -94, 0, y), UDim2.fromOffset(80, 16), Enum.TextXAlignment.Right)
+	local bar2 = make("Frame", { Position = UDim2.fromOffset(14, y + 26), Size = UDim2.new(1, -28, 0, 6), BackgroundColor3 = C.white, BackgroundTransparency = 0.85, BorderSizePixel = 0 }, parent)
+	corner(bar2, 3)
+	local fill = make("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = C.accent, BorderSizePixel = 0 }, bar2)
+	corner(fill, 3)
+	local knob = make("Frame", { Size = UDim2.fromOffset(14, 14), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 0, 0.5, 0), BackgroundColor3 = C.text, BorderSizePixel = 0 }, bar2)
+	corner(knob, 7)
+	local hit = make("TextButton", { Text = "", BackgroundTransparency = 1, Position = UDim2.fromOffset(0, -9), Size = UDim2.new(1, 0, 1, 18) }, bar2)
+	local function paint()
+		local v = get()
+		local a = math.clamp((v - min) / (max - min), 0, 1)
+		fill.Size = UDim2.new(a, 0, 1, 0); knob.Position = UDim2.new(a, 0, 0.5, 0); val.Text = fmt(v)
+	end
+	local dragging = false
+	local function setFromX(x)
+		local a = math.clamp((x - bar2.AbsolutePosition.X) / math.max(bar2.AbsoluteSize.X, 1), 0, 1)
+		local v = math.floor((min + (max - min) * a) / step + 0.5) * step
+		set(math.clamp(v, min, max)); paint()
+	end
+	hit.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true; setFromX(i.Position.X) end end)
+	keep(UIS.InputChanged:Connect(function(i) if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then setFromX(i.Position.X) end end))
+	keep(UIS.InputEnded:Connect(function(i) if dragging and i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false; save() end end))
+	paint()
+	repaints[#repaints + 1] = paint
+end
+local function segmented(parent, y, label, options, get, set)
+	text(parent, label, 12, C.dim, UDim2.fromOffset(14, y), UDim2.new(1, -28, 0, 16))
+	local holder = make("Frame", { Position = UDim2.fromOffset(14, y + 20), Size = UDim2.new(1, -28, 0, 28), BackgroundTransparency = 1 }, parent)
+	make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4) }, holder)
+	local btns = {}
+	local n = #options
+	for i, o in ipairs(options) do
+		local b = make("TextButton", {
+			Text = o.text, Size = UDim2.new(1 / n, -4 * (n - 1) / n, 1, 0), BackgroundColor3 = C.white, BackgroundTransparency = 0.92,
+			TextColor3 = C.text, Font = Enum.Font.GothamMedium, TextSize = 12, AutoButtonColor = false,
+		}, holder)
+		corner(b, 8)
+		btns[i] = b
+		b.MouseButton1Click:Connect(function() set(o.id); for _, f in ipairs(repaints) do f() end; save() end)
+	end
+	local function paint()
+		for i, o in ipairs(options) do
+			local on = get() == o.id
+			btns[i].BackgroundColor3 = on and C.accent or C.white
+			btns[i].BackgroundTransparency = on and 0.2 or 0.92
+		end
+	end
+	paint()
+	repaints[#repaints + 1] = paint
+end
+
+-- Bullet tracers card
+local trCard = card(0, 0.5, "Bullet tracers")
+toggleAt(trCard, UDim2.new(1, -52, 0, 12), function() return tr.on end, function(v) tr.on = v end)
+text(trCard, "Color", 12, C.dim, UDim2.fromOffset(14, 42), UDim2.new(1, -28, 0, 16))
+local swatches = {}
+for i, name in ipairs(COLOR_ORDER) do
+	local b = make("TextButton", {
+		Text = name == "Rainbow" and "R" or "", Position = UDim2.fromOffset(14 + (i - 1) * 30, 62), Size = UDim2.fromOffset(24, 24),
+		BackgroundColor3 = TRACER_COLORS[name] or Color3.fromRGB(255, 160, 60), AutoButtonColor = false, TextColor3 = C.bg,
+		Font = Enum.Font.GothamBold, TextSize = 12,
+	}, trCard)
+	corner(b, 12)
+	local ring = make("UIStroke", { Color = C.text, Thickness = 2, Transparency = 1 }, b)
+	swatches[name] = ring
+	b.MouseButton1Click:Connect(function()
+		tr.color = name
+		for n2, r2 in pairs(swatches) do r2.Transparency = (n2 == tr.color) and 0 or 1 end
+		save()
+	end)
+end
+repaints[#repaints + 1] = function() for n2, r2 in pairs(swatches) do r2.Transparency = (n2 == tr.color) and 0 or 1 end end
+for n2, r2 in pairs(swatches) do r2.Transparency = (n2 == tr.color) and 0 or 1 end
+slider(trCard, 98, "Thickness", 0.02, 0.5, 0.01, function() return tr.thick end, function(v) tr.thick = v end, function(v) return string.format("%.2f", v) end)
+slider(trCard, 146, "Lifetime", 0.1, 2.5, 0.05, function() return tr.life end, function(v) tr.life = v end, function(v) return string.format("%.2f s", v) end)
+toggleRow(trCard, 198, "Glow", function() return tr.glow end, function(v) tr.glow = v end)
+toggleRow(trCard, 226, "Moving streak", function() return tr.streak end, function(v) tr.streak = v end)
+toggleRow(trCard, 254, "Replace the game's tracer", function() return tr.replace end, function(v) tr.replace = v end)
+text(trCard, "Only your own shots. Test it with a shot at a wall.", 11, C.dim, UDim2.fromOffset(14, 284), UDim2.new(1, -28, 0, 30))
+
+-- Weapon spin card
+local spCard = card(0.5, 0.5, "Weapon spin")
+toggleAt(spCard, UDim2.new(1, -52, 0, 12), function() return spin.on end, function(v) spin.on = v end)
+slider(spCard, 44, "Speed", 20, 720, 10, function() return spin.speed end, function(v) spin.speed = v end, function(v) return math.floor(v) .. " °/s" end)
+segmented(spCard, 92, "Direction", { { id = 1, text = "Clockwise" }, { id = -1, text = "Counter" } }, function() return spin.dir end, function(v) spin.dir = v end)
+segmented(spCard, 146, "Axis", { { id = "X", text = "X  tilt" }, { id = "Y", text = "Y  turn" }, { id = "Z", text = "Z  roll" } }, function() return spin.axis end, function(v) spin.axis = v end)
+segmented(spCard, 200, "Behavior", { { id = "Continuous", text = "Continuous" }, { id = "Swing", text = "Swing" }, { id = "On equip", text = "On equip" } }, function() return spin.mode end, function(v) spin.mode = v end)
+text(spCard, "Only the weapon in your view turns. Nothing else about the game changes.", 11, C.dim, UDim2.fromOffset(14, 254), UDim2.new(1, -28, 0, 30))
+
+local function defaults()
+	tr.on, tr.color, tr.thick, tr.life, tr.glow, tr.streak, tr.replace = false, "Cyan", 0.12, 0.6, true, false, true
+	spin.on, spin.speed, spin.dir, spin.axis, spin.mode = false, 180, 1, "Y", "Continuous"
+end
+
+local page = "skins"
+local function setPage(name)
+	page = name
+	local skinsPage = (name == "skins")
+	left.frame.Visible = skinsPage; right.frame.Visible = skinsPage; fxPage.Visible = not skinsPage
+	reBtn.Visible = skinsPage; resetOne.Visible = skinsPage; resetAll.Visible = skinsPage; resetFx.Visible = not skinsPage
+	tabSkins.BackgroundColor3 = skinsPage and C.accent or C.white; tabSkins.BackgroundTransparency = skinsPage and 0.2 or 0.92
+	tabFx.BackgroundColor3 = skinsPage and C.white or C.accent; tabFx.BackgroundTransparency = skinsPage and 0.92 or 0.2
+	setStatus(skinsPage and "Pick a weapon, click a skin. Only you see the change." or "Tracers and weapon spin. Each one has its own switch.")
+end
+tabSkins.MouseButton1Click:Connect(function() setPage("skins") end)
+tabFx.MouseButton1Click:Connect(function() setPage("fx") end)
+resetFx.MouseButton1Click:Connect(function()
+	defaults(); for _, f in ipairs(repaints) do f() end; save()
+	setStatus("Effects are back to their defaults.", "good")
+end)
+
 -- help card (shown the first time, and with the ? button)
 local help = make("Frame", {
-	Size = UDim2.fromOffset(470, 350), Position = UDim2.new(0.5, -235, 0.5, -175), BackgroundColor3 = C.bg,
+	Size = UDim2.fromOffset(480, 400), Position = UDim2.new(0.5, -240, 0.5, -200), BackgroundColor3 = C.bg,
 	BackgroundTransparency = 0.04, BorderSizePixel = 0, Visible = false, ZIndex = 20,
 }, win)
 corner(help, 14)
 stroke(help, 0.2, C.accent, 1.5)
 local helpText = text(help,
-	"How it works\n\n1.  Pick a weapon on the left.\n2.  Click a skin on the right. Click it again to turn it off.\n3.  If you are holding that weapon it updates by itself (the script quickly switches away and back). If not, it shows the next time you equip it.\n4.  Patterned skins get a Pattern and Wear box. Type a number and press Enter, or hit Random.\n5.  \"Hide arms\" (top right) makes your arms invisible so nothing covers the skin.\n\nA skin only shows on a weapon that is in your loadout. Only you see these changes. \"Free cursor\" (top right, or RightCtrl) keeps the mouse unlocked in first person so you never need Esc.\n\nRightShift hides or shows this window. There is no on-screen tab while it is hidden.",
+	"How it works\n\n1.  Pick a weapon on the left.\n2.  Click a skin on the right. Click it again to turn it off.\n3.  If you are holding that weapon it updates by itself (the script quickly switches away and back). If not, it shows the next time you equip it.\n4.  Patterned skins get a Pattern and Wear box. Type a number and press Enter, or hit Random.\n5.  \"Hide arms\" (top right) makes your arms invisible so nothing covers the skin.\n6.  The Effects tab has bullet tracers (color, thickness, lifetime, glow) and a weapon spin (speed, direction, axis, behavior).\n\nA skin only shows on a weapon that is in your loadout. Only you see these changes. \"Free cursor\" (top right, or RightCtrl) keeps the mouse unlocked in first person so you never need Esc.\n\nRightShift hides or shows this window. There is no on-screen tab while it is hidden.",
 	13, C.text, UDim2.fromOffset(20, 16), UDim2.new(1, -40, 1, -70))
 helpText.ZIndex = 21
 helpText.TextYAlignment = Enum.TextYAlignment.Top
@@ -666,7 +980,7 @@ do
 	local _, held = heldModel()
 	current = (held and skinsOf[held]) and held or weapons[1]
 end
-refreshWeapons(); refreshSkins()
+refreshWeapons(); refreshSkins(); setPage("skins")
 if seenHelp then
 	setStatus("Pick a weapon, click a skin. Only you see the change.")
 else
@@ -678,12 +992,16 @@ local function unload()
 	alive = false
 	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerArms") end)
 	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerCursor") end)
+	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerFx") end)
+	for _, t in ipairs(active) do pcall(function() t.core:Destroy(); t.glow:Destroy(); t.a0:Destroy(); t.a1:Destroy() end) end
+	for _, t in ipairs(pool) do pcall(function() t.core:Destroy(); t.glow:Destroy(); t.a0:Destroy(); t.a1:Destroy() end) end
 	freeCursor = false
 	restoreArms()
 	g(function()
 		if WM.createAnimated == wrapCA then WM.createAnimated = origCreateAnimated end
 		if WM.create == wrapC then WM.create = origCreate end
 		if FC and FC.bind == wrapBind then FC.bind = origBind end
+		if CE and wrapShot and CE.shot == wrapShot then CE.shot = origShot end
 	end)
 	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
 	pcall(function() gui:Destroy() end)
@@ -695,5 +1013,6 @@ _G.PistolDuelsSkinChanger = {
 	unload = unload, sel = sel, pat = pat, wear = wear, hits = function() return hits end, reEquip = reEquip,
 	setHideArms = setHideArms, hideArms = function() return hideArms end,
 	setFreeCursor = setFreeCursor, freeCursor = function() return freeCursor end,
+	tr = tr, spin = spin, tracer = spawnTracer,
 }
 print(("[SkinChanger] ready: %d weapons, %d skins"):format(#weapons, (function() local n = 0 for _, l in pairs(skinsOf) do n += #l end return n end)()))
