@@ -71,6 +71,7 @@ end
 -- ===================== saved choices =====================
 local sel, pat, wear = {}, {}, {}   -- weapon -> skin id / pattern number / wear
 local seenHelp = false
+local hideArms = false
 pcall(function()
 	if type(readfile) == "function" and type(isfile) == "function" and isfile(SAVE_FILE) then
 		local d = HttpService:JSONDecode(readfile(SAVE_FILE))
@@ -79,13 +80,14 @@ pcall(function()
 			for k, v in pairs(type(d.pat) == "table" and d.pat or {}) do if type(v) == "number" then pat[k] = v end end
 			for k, v in pairs(type(d.wear) == "table" and d.wear or {}) do if type(v) == "number" then wear[k] = v end end
 			seenHelp = d.seenHelp == true
+			hideArms = d.hideArms == true
 		end
 	end
 end)
 local function save()
 	pcall(function()
 		if type(writefile) == "function" then
-			writefile(SAVE_FILE, HttpService:JSONEncode({ sel = sel, pat = pat, wear = wear, seenHelp = seenHelp }))
+			writefile(SAVE_FILE, HttpService:JSONEncode({ sel = sel, pat = pat, wear = wear, seenHelp = seenHelp, hideArms = hideArms }))
 		end
 	end)
 end
@@ -217,11 +219,66 @@ local function showingNow(weapon)   -- true when the weapon in your hands is the
 	return m ~= nil and w == weapon and m:GetAttribute("PDSkinId") == sel[weapon]
 end
 
+-- ===================== invisible arms =====================
+-- Hides the arms/hands of your viewmodel so they don't cover the skin. Done every frame (after the game's own update)
+-- because the game keeps setting the arm transparency itself.
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local armOrig = setmetatable({}, { __mode = "k" })       -- arm part -> its own transparency (to put back)
+local trackedModels = setmetatable({}, { __mode = "k" }) -- model -> { parts = { [part] = true } }
+local function isArmPart(p)
+	if not p:IsA("BasePart") then return false end
+	if p:FindFirstAncestor("AvatarArms") then return true end
+	local n = string.lower(p.Name)
+	if string.find(n, "^left") or string.find(n, "^right") then
+		return string.find(n, "arm", 1, true) or string.find(n, "hand", 1, true) or string.find(n, "glove", 1, true)
+			or string.find(n, "sleeve", 1, true) or false
+	end
+	return false
+end
+local function track(model)
+	if trackedModels[model] then return trackedModels[model] end
+	local rec = { parts = {} }
+	trackedModels[model] = rec
+	local function consider(d) if isArmPart(d) then rec.parts[d] = true end end
+	consider(model)
+	for _, d in ipairs(model:GetDescendants()) do consider(d) end
+	model.DescendantAdded:Connect(consider)
+	return rec
+end
+local function enforceArms()
+	if not hideArms then return end
+	local cam = workspace.CurrentCamera
+	if not cam then return end
+	for _, c in ipairs(cam:GetChildren()) do
+		if string.find(c.Name, "^PD_") or c.Name == "AvatarArms" then
+			local rec = track(c)
+			for p in pairs(rec.parts) do
+				if p.Parent then
+					if armOrig[p] == nil then armOrig[p] = p.Transparency end
+					if p.Transparency ~= 1 then p.Transparency = 1 end
+				else
+					rec.parts[p] = nil
+				end
+			end
+		end
+	end
+end
+local function restoreArms()
+	for _, rec in pairs(trackedModels) do
+		for p in pairs(rec.parts) do
+			local o = armOrig[p]
+			if o ~= nil and p.Parent then p.Transparency = o end
+		end
+	end
+end
+pcall(function() RunService:BindToRenderStep("PDSkinChangerArms", Enum.RenderPriority.Last.Value, enforceArms) end)
+
 -- ===================== window =====================
 local C = {
-	bg = Color3.fromRGB(20, 21, 27), panel = Color3.fromRGB(30, 31, 40), item = Color3.fromRGB(42, 44, 56),
-	itemHover = Color3.fromRGB(54, 57, 72), sel = Color3.fromRGB(58, 98, 210), text = Color3.fromRGB(236, 237, 242),
-	dim = Color3.fromRGB(150, 153, 168), good = Color3.fromRGB(96, 208, 130), warn = Color3.fromRGB(240, 180, 90),
+	bg = Color3.fromRGB(13, 14, 19), white = Color3.fromRGB(255, 255, 255), accent = Color3.fromRGB(94, 138, 255),
+	text = Color3.fromRGB(240, 241, 246), dim = Color3.fromRGB(158, 163, 181),
+	good = Color3.fromRGB(110, 214, 144), warn = Color3.fromRGB(243, 186, 98),
 }
 local gui = Instance.new("ScreenGui")
 gui.Name = "PistolDuelsSkinChanger"; gui.ResetOnSpawn = false; gui.DisplayOrder = 50; gui.IgnoreGuiInset = true
@@ -242,8 +299,12 @@ do   -- gethui can throw on some executors, so every parent is tried in turn
 	if not gui.Parent then warn("[SkinChanger] Couldn't place the window anywhere."); return end
 end
 
-local function corner(o, r) local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r or 6); c.Parent = o end
-local function make(class, props, parent)
+local function corner(o, r) local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r or 8); c.Parent = o end
+local make
+local function stroke(o, transparency, color, thickness)
+	return make("UIStroke", { Color = color or C.white, Transparency = transparency or 0.88, Thickness = thickness or 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, o)
+end
+make = function(class, props, parent)
 	local o = Instance.new(class)
 	for k, v in pairs(props) do o[k] = v end
 	o.Parent = parent
@@ -255,45 +316,88 @@ local function text(parent, str, size, color, pos, sz, align, font)
 		Position = pos, Size = sz, TextXAlignment = align or Enum.TextXAlignment.Left, TextWrapped = true,
 	}, parent)
 end
-local function button(parent, str, pos, sz, bg)
+-- soft "glass" button: see-through, brightens on hover
+local function button(parent, str, pos, sz, accent)
+	local base = accent and 0.15 or 0.92
 	local b = make("TextButton", {
-		Text = str, Position = pos, Size = sz, BackgroundColor3 = bg or C.item, TextColor3 = C.text,
-		Font = Enum.Font.GothamMedium, TextSize = 13, AutoButtonColor = true,
+		Text = str, Position = pos, Size = sz, BackgroundColor3 = accent and C.accent or C.white, BackgroundTransparency = base,
+		TextColor3 = C.text, Font = Enum.Font.GothamMedium, TextSize = 13, AutoButtonColor = false,
 	}, parent)
-	corner(b, 6)
+	corner(b, 8)
+	b.MouseEnter:Connect(function() b.BackgroundTransparency = accent and 0.05 or 0.84 end)
+	b.MouseLeave:Connect(function() b.BackgroundTransparency = base end)
 	return b
 end
 local function inputBox(parent, pos, sz, placeholder)
 	local t = make("TextBox", {
-		Position = pos, Size = sz, BackgroundColor3 = C.item, TextColor3 = C.text, PlaceholderText = placeholder,
-		PlaceholderColor3 = C.dim, Text = "", Font = Enum.Font.Gotham, TextSize = 13, ClearTextOnFocus = false,
+		Position = pos, Size = sz, BackgroundColor3 = C.white, BackgroundTransparency = 0.92, TextColor3 = C.text,
+		PlaceholderText = placeholder, PlaceholderColor3 = C.dim, Text = "", Font = Enum.Font.Gotham, TextSize = 13, ClearTextOnFocus = false,
 	}, parent)
-	corner(t, 6)
+	corner(t, 8)
 	return t
 end
 
-local W, H = 660, 470
+local W, H = 640, 460
 local win = make("Frame", {
-	Size = UDim2.fromOffset(W, H), Position = UDim2.new(0.5, -W / 2, 0.5, -H / 2), BackgroundColor3 = C.bg, BorderSizePixel = 0,
+	Size = UDim2.fromOffset(W, H), Position = UDim2.new(0.5, -W / 2, 0.5, -H / 2), BackgroundColor3 = C.bg,
+	BackgroundTransparency = 0.2, BorderSizePixel = 0,
 }, gui)
-corner(win, 10)
+corner(win, 14)
+stroke(win, 0.86)
 
--- a small tab to bring the window back after hiding it
-local pill = button(gui, "Skin Changer", UDim2.new(0.5, -55, 0, 6), UDim2.fromOffset(110, 26), C.panel)
+-- a small pill to bring the window back after hiding it
+local pill = button(gui, "Skin Changer", UDim2.new(0.5, -55, 0, 8), UDim2.fromOffset(110, 28))
+pill.BackgroundColor3 = C.bg; pill.BackgroundTransparency = 0.25
 pill.Visible = false
 local function setOpen(open) win.Visible = open; pill.Visible = not open end
 pill.MouseButton1Click:Connect(function() setOpen(true) end)
 
--- title bar
-local top = make("Frame", { Size = UDim2.new(1, 0, 0, 44), BackgroundColor3 = C.panel, BorderSizePixel = 0 }, win)
-corner(top, 10)
-text(top, "Pistol Duels Skin Changer", 17, C.text, UDim2.fromOffset(14, 0), UDim2.fromOffset(260, 44), nil, Enum.Font.GothamBold)
-text(top, "local only: others don't see it", 11, C.dim, UDim2.new(1, -350, 0, 0), UDim2.fromOffset(200, 44), Enum.TextXAlignment.Right)
-local closeBtn = button(top, "X", UDim2.new(1, -38, 0, 9), UDim2.fromOffset(28, 26))
-local hideBtn = button(top, "–", UDim2.new(1, -72, 0, 9), UDim2.fromOffset(28, 26))
-local helpBtn = button(top, "?", UDim2.new(1, -106, 0, 9), UDim2.fromOffset(28, 26))
+-- header: title on the left, arms switch + small buttons on the right
+local top = make("Frame", { Size = UDim2.new(1, 0, 0, 52), BackgroundTransparency = 1 }, win)
+text(top, "Skin Changer", 17, C.text, UDim2.fromOffset(18, 8), UDim2.fromOffset(200, 22), nil, Enum.Font.GothamBold)
+text(top, "Pistol Duels  ·  only you see it", 11, C.dim, UDim2.fromOffset(18, 29), UDim2.fromOffset(220, 16))
+local closeBtn = button(top, "×", UDim2.new(1, -44, 0, 12), UDim2.fromOffset(30, 28))
+local hideBtn = button(top, "–", UDim2.new(1, -78, 0, 12), UDim2.fromOffset(30, 28))
+local helpBtn = button(top, "?", UDim2.new(1, -112, 0, 12), UDim2.fromOffset(30, 28))
+closeBtn.TextSize = 18
 
--- dragging by the title bar
+-- switch: Hide arms
+local setStatus
+local armsLabel = text(top, "Hide arms", 12, C.dim, UDim2.new(1, -226, 0, 0), UDim2.fromOffset(62, 52), Enum.TextXAlignment.Right)
+local sw = make("TextButton", {
+	Text = "", AutoButtonColor = false, Position = UDim2.new(1, -158, 0, 16), Size = UDim2.fromOffset(38, 20),
+	BackgroundColor3 = C.white, BackgroundTransparency = 0.82,
+}, top)
+corner(sw, 10)
+local knob = make("Frame", { Size = UDim2.fromOffset(16, 16), Position = UDim2.fromOffset(2, 2), BackgroundColor3 = C.text, BorderSizePixel = 0 }, sw)
+corner(knob, 8)
+local function paintSwitch(animate)
+	local goal = {
+		BackgroundColor3 = hideArms and C.accent or C.white,
+		BackgroundTransparency = hideArms and 0.1 or 0.82,
+	}
+	local kgoal = { Position = hideArms and UDim2.fromOffset(20, 2) or UDim2.fromOffset(2, 2) }
+	if animate then
+		TweenService:Create(sw, TweenInfo.new(0.15), goal):Play()
+		TweenService:Create(knob, TweenInfo.new(0.15), kgoal):Play()
+	else
+		for k, v in pairs(goal) do sw[k] = v end
+		knob.Position = kgoal.Position
+	end
+end
+local function setHideArms(on)
+	hideArms = on and true or false
+	paintSwitch(true); save()
+	if hideArms then enforceArms() else restoreArms() end
+end
+sw.MouseButton1Click:Connect(function()
+	setHideArms(not hideArms)
+	setStatus(hideArms and "Arms hidden. They stay hidden when you switch weapons." or "Arms are back.", "good")
+end)
+paintSwitch(false)
+make("Frame", { Position = UDim2.new(0, 14, 1, -1), Size = UDim2.new(1, -28, 0, 1), BackgroundColor3 = C.white, BackgroundTransparency = 0.9, BorderSizePixel = 0 }, top)
+
+-- dragging by the header
 do
 	local dragging, startPos, startMouse
 	keep(top.InputBegan:Connect(function(i)
@@ -308,55 +412,56 @@ do
 	keep(UIS.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end end))
 end
 
--- bottom bar: status line and buttons
-local bar = make("Frame", { Position = UDim2.new(0, 10, 1, -54), Size = UDim2.new(1, -20, 0, 44), BackgroundColor3 = C.panel, BorderSizePixel = 0 }, win)
-corner(bar, 8)
-local status = text(bar, "", 12, C.dim, UDim2.fromOffset(12, 0), UDim2.new(1, -330, 1, 0))
-local reBtn = button(bar, "Re-equip now", UDim2.new(1, -318, 0, 8), UDim2.fromOffset(96, 28))
-local resetOne = button(bar, "Reset this one", UDim2.new(1, -216, 0, 8), UDim2.fromOffset(100, 28))
-local resetAll = button(bar, "Reset all", UDim2.new(1, -110, 0, 8), UDim2.fromOffset(100, 28))
-local function setStatus(t, kind)
+-- bottom row: status text on the left, buttons on the right
+local bar = make("Frame", { Position = UDim2.new(0, 14, 1, -50), Size = UDim2.new(1, -28, 0, 38), BackgroundTransparency = 1 }, win)
+local status = text(bar, "", 12, C.dim, UDim2.fromOffset(2, 0), UDim2.new(1, -334, 1, 0))
+local reBtn = button(bar, "Re-equip", UDim2.new(1, -326, 0, 4), UDim2.fromOffset(98, 30))
+local resetOne = button(bar, "Reset this one", UDim2.new(1, -222, 0, 4), UDim2.fromOffset(110, 30))
+local resetAll = button(bar, "Reset all", UDim2.new(1, -106, 0, 4), UDim2.fromOffset(106, 30))
+setStatus = function(t, kind)
 	status.Text = t
 	status.TextColor3 = (kind == "good" and C.good) or (kind == "warn" and C.warn) or C.dim
 end
 
--- two panels: weapons (left) and skins (right)
+-- two glass panels: weapons (left) and skins (right)
 local function column(title)
-	local f = make("Frame", { BackgroundColor3 = C.panel, BorderSizePixel = 0 }, win)
-	corner(f, 8)
-	local t = text(f, title, 12, C.dim, UDim2.fromOffset(12, 6), UDim2.new(1, -24, 0, 16), nil, Enum.Font.GothamMedium)
+	local f = make("Frame", { BackgroundColor3 = C.white, BackgroundTransparency = 0.95, BorderSizePixel = 0 }, win)
+	corner(f, 12)
+	stroke(f, 0.93)
+	local t = text(f, title, 11, C.dim, UDim2.fromOffset(14, 9), UDim2.new(1, -28, 0, 14), nil, Enum.Font.GothamMedium)
 	local s = make("ScrollingFrame", {
-		BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4, CanvasSize = UDim2.new(),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.white,
+		ScrollBarImageTransparency = 0.6, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
 	}, f)
 	make("UIListLayout", { Padding = UDim.new(0, 4) }, s)
+	make("UIPadding", { PaddingRight = UDim.new(0, 4) }, s)
 	return { frame = f, title = t, scroll = s }
 end
 local left = column("WEAPONS")
-left.frame.Position = UDim2.fromOffset(10, 52); left.frame.Size = UDim2.new(0, 170, 1, -114)
-left.scroll.Position = UDim2.fromOffset(6, 28); left.scroll.Size = UDim2.new(1, -12, 1, -34)
+left.frame.Position = UDim2.fromOffset(14, 60); left.frame.Size = UDim2.new(0, 158, 1, -120)
+left.scroll.Position = UDim2.fromOffset(6, 30); left.scroll.Size = UDim2.new(1, -12, 1, -36)
 local right = column("SKINS")
-right.frame.Position = UDim2.fromOffset(188, 52); right.frame.Size = UDim2.new(1, -198, 1, -114)
+right.frame.Position = UDim2.fromOffset(180, 60); right.frame.Size = UDim2.new(1, -194, 1, -120)
 local search = make("TextBox", {
-	Position = UDim2.fromOffset(8, 26), Size = UDim2.new(1, -16, 0, 26), BackgroundColor3 = C.item, TextColor3 = C.text,
-	PlaceholderText = "Search skins...", PlaceholderColor3 = C.dim, Text = "", Font = Enum.Font.Gotham, TextSize = 13,
-	ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left,
+	Position = UDim2.fromOffset(10, 30), Size = UDim2.new(1, -20, 0, 28), BackgroundColor3 = C.white, BackgroundTransparency = 0.92,
+	TextColor3 = C.text, PlaceholderText = "Search skins or rarity...", PlaceholderColor3 = C.dim, Text = "", Font = Enum.Font.Gotham,
+	TextSize = 13, ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left,
 }, right.frame)
-corner(search, 6)
-make("UIPadding", { PaddingLeft = UDim.new(0, 8) }, search)
+corner(search, 8)
+make("UIPadding", { PaddingLeft = UDim.new(0, 10) }, search)
 
 -- pattern / wear strip (only for patterned skins)
-local strip = make("Frame", { Position = UDim2.fromOffset(8, 58), Size = UDim2.new(1, -16, 0, 28), BackgroundTransparency = 1, Visible = false }, right.frame)
+local strip = make("Frame", { Position = UDim2.fromOffset(10, 64), Size = UDim2.new(1, -20, 0, 28), BackgroundTransparency = 1, Visible = false }, right.frame)
 text(strip, "Pattern", 12, C.dim, UDim2.fromOffset(2, 0), UDim2.fromOffset(46, 28))
 local patBox = inputBox(strip, UDim2.fromOffset(50, 1), UDim2.fromOffset(56, 26), "1-1000")
 text(strip, "Wear", 12, C.dim, UDim2.fromOffset(116, 0), UDim2.fromOffset(32, 28))
 local wearBox = inputBox(strip, UDim2.fromOffset(150, 1), UDim2.fromOffset(56, 26), "0-1")
 local randBtn = button(strip, "Random", UDim2.fromOffset(216, 1), UDim2.fromOffset(70, 26))
-text(strip, "(Enter to apply)", 11, C.dim, UDim2.fromOffset(292, 0), UDim2.new(1, -292, 0, 28))
+text(strip, "press Enter to apply", 11, C.dim, UDim2.fromOffset(294, 0), UDim2.new(1, -294, 0, 28))
 local function layoutRight(showStrip)
 	strip.Visible = showStrip
-	right.scroll.Position = UDim2.fromOffset(6, showStrip and 90 or 58)
-	right.scroll.Size = UDim2.new(1, -12, 1, showStrip and -96 or -64)
+	right.scroll.Position = UDim2.fromOffset(6, showStrip and 98 or 66)
+	right.scroll.Size = UDim2.new(1, -12, 1, showStrip and -104 or -72)
 end
 layoutRight(false)
 
@@ -364,23 +469,26 @@ local current      -- selected weapon
 local weaponRows, skinRows = {}, {}
 local refreshWeapons, refreshSkins
 
--- a list row: optional left stripe (rarity colour), name, small tag on the right, blue when in use
-local function row(parent, name, tag, active, stripe)
+-- a list row: optional rarity dot, name, small tag on the right; accent colour when in use
+local function row(parent, name, tag, active, dot)
 	local b = make("TextButton", {
-		Size = UDim2.new(1, -4, 0, 30), BackgroundColor3 = active and C.sel or C.item, Text = "", AutoButtonColor = false,
+		Size = UDim2.new(1, -2, 0, 32), BackgroundColor3 = active and C.accent or C.white,
+		BackgroundTransparency = active and 0.25 or 0.94, Text = "", AutoButtonColor = false,
 	}, parent)
-	corner(b, 6)
-	if stripe then
-		local st = make("Frame", { Size = UDim2.new(0, 4, 1, -10), Position = UDim2.fromOffset(5, 5), BackgroundColor3 = stripe, BorderSizePixel = 0 }, b)
-		corner(st, 2)
+	corner(b, 8)
+	local x = 12
+	if dot then
+		local d = make("Frame", { Size = UDim2.fromOffset(8, 8), Position = UDim2.new(0, 12, 0.5, -4), BackgroundColor3 = dot, BorderSizePixel = 0 }, b)
+		corner(d, 4)
+		x = 28
 	end
-	local label = text(b, name, 13, C.text, UDim2.fromOffset(stripe and 16 or 12, 0), UDim2.new(1, -(stripe and 16 or 12) - 84, 1, 0))
+	local label = text(b, name, 13, C.text, UDim2.fromOffset(x, 0), UDim2.new(1, -x - 88, 1, 0))
 	label.TextTruncate = Enum.TextTruncate.AtEnd
 	if tag and tag ~= "" then
-		text(b, tag, 11, active and C.text or C.dim, UDim2.new(1, -86, 0, 0), UDim2.fromOffset(78, 30), Enum.TextXAlignment.Right)
+		text(b, tag, 11, active and C.text or C.dim, UDim2.new(1, -90, 0, 0), UDim2.fromOffset(80, 32), Enum.TextXAlignment.Right)
 	end
-	b.MouseEnter:Connect(function() if not active then b.BackgroundColor3 = C.itemHover end end)
-	b.MouseLeave:Connect(function() if not active then b.BackgroundColor3 = C.item end end)
+	b.MouseEnter:Connect(function() if not active then b.BackgroundTransparency = 0.86 end end)
+	b.MouseLeave:Connect(function() if not active then b.BackgroundTransparency = 0.94 end end)
 	return b
 end
 local function note(parent, str, store)
@@ -452,7 +560,7 @@ function refreshSkins()
 		if q == "" or string.find(string.lower(s.display), q, 1, true) or string.find(string.lower(s.rarity), q, 1, true) then
 			shown += 1
 			local on = sel[current] == s.id
-			local b = row(right.scroll, s.display, on and "in use" or s.rarity, on, s.color)
+			local b = row(right.scroll, s.display, on and "in use" or s.rarity, on, s.color or C.dim)
 			skinRows[#skinRows + 1] = b
 			b.MouseButton1Click:Connect(function()
 				local w = current
@@ -462,7 +570,7 @@ function refreshSkins()
 			end)
 		end
 	end
-	right.title.Text = "SKINS FOR " .. string.upper(displayOf[current] or current) .. "  (" .. (q == "" and #list or (shown .. " of " .. #list)) .. ")"
+	right.title.Text = "SKINS FOR " .. string.upper(displayOf[current] or current) .. "  ·  " .. (q == "" and #list or (shown .. " of " .. #list))
 	if shown == 0 then note(right.scroll, "No skins match \"" .. (search.Text or "") .. "\".", skinRows) end
 end
 
@@ -510,17 +618,17 @@ end)
 
 -- help card (shown the first time, and with the ? button)
 local help = make("Frame", {
-	Size = UDim2.fromOffset(450, 290), Position = UDim2.new(0.5, -225, 0.5, -145), BackgroundColor3 = C.panel, BorderSizePixel = 0,
-	Visible = false, ZIndex = 20,
+	Size = UDim2.fromOffset(450, 300), Position = UDim2.new(0.5, -225, 0.5, -150), BackgroundColor3 = C.bg,
+	BackgroundTransparency = 0.04, BorderSizePixel = 0, Visible = false, ZIndex = 20,
 }, win)
-corner(help, 10)
-make("UIStroke", { Color = C.sel, Thickness = 1.5 }, help)
+corner(help, 14)
+stroke(help, 0.2, C.accent, 1.5)
 local helpText = text(help,
-	"How it works\n\n1.  Pick a weapon on the left.\n2.  Click a skin on the right. Click it again to turn it off.\n3.  If you are holding that weapon it updates by itself (the script quickly switches away and back). If not, it shows the next time you equip it.\n4.  Patterned skins get a Pattern and Wear box. Type a number and press Enter, or hit Random.\n\nA skin only shows on a weapon that is in your loadout.\nOnly you see these changes. Your inventory, trades and what other players see are not touched.\n\nRightShift hides or shows this window.",
-	13, C.text, UDim2.fromOffset(18, 14), UDim2.new(1, -36, 1, -64))
+	"How it works\n\n1.  Pick a weapon on the left.\n2.  Click a skin on the right. Click it again to turn it off.\n3.  If you are holding that weapon it updates by itself (the script quickly switches away and back). If not, it shows the next time you equip it.\n4.  Patterned skins get a Pattern and Wear box. Type a number and press Enter, or hit Random.\n5.  \"Hide arms\" (top right) makes your arms invisible so nothing covers the skin.\n\nA skin only shows on a weapon that is in your loadout. Only you see these changes. RightShift hides or shows this window.",
+	13, C.text, UDim2.fromOffset(20, 16), UDim2.new(1, -40, 1, -70))
 helpText.ZIndex = 21
 helpText.TextYAlignment = Enum.TextYAlignment.Top
-local gotIt = button(help, "Got it", UDim2.new(0.5, -50, 1, -44), UDim2.fromOffset(100, 30), C.sel)
+local gotIt = button(help, "Got it", UDim2.new(0.5, -50, 1, -46), UDim2.fromOffset(100, 32), true)
 gotIt.ZIndex = 21
 local function showHelp(on) help.Visible = on end
 helpBtn.MouseButton1Click:Connect(function() showHelp(not help.Visible) end)
@@ -545,6 +653,8 @@ end
 local function unload()
 	if not alive then return end
 	alive = false
+	pcall(function() RunService:UnbindFromRenderStep("PDSkinChangerArms") end)
+	restoreArms()
 	g(function()
 		if WM.createAnimated == wrapCA then WM.createAnimated = origCreateAnimated end
 		if WM.create == wrapC then WM.create = origCreate end
@@ -558,5 +668,6 @@ closeBtn.MouseButton1Click:Connect(unload)
 
 _G.PistolDuelsSkinChanger = {
 	unload = unload, sel = sel, pat = pat, wear = wear, hits = function() return hits end, reEquip = reEquip,
+	setHideArms = setHideArms, hideArms = function() return hideArms end,
 }
 print(("[SkinChanger] ready: %d weapons, %d skins"):format(#weapons, (function() local n = 0 for _, l in pairs(skinsOf) do n += #l end return n end)()))
